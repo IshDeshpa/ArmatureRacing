@@ -5,6 +5,10 @@ Enter torque request on serial window.
 As of now only responds to negative torque requests. e.g. -10
 Positive torque requests trigger the inverter pwm but do not rotate the motor.
 
+V5 incorporates ISA can shunt on CAN0. Let's hope the leaf inverter doesnt mind the isa messages and vice versa:)
+WiFi on Serial2.
+Precharge control : out1 = precharge , out2= main contactor
+
 
 Copyright 2019 
 Perttu Ahola (all the hard work!)
@@ -34,11 +38,12 @@ https://github.com/damienmaguire/LeafLogs
 
 
 */
-
+#include <Metro.h>
 #include <due_can.h>  
 #include <due_wire.h> 
 #include <DueTimer.h>  
 #include <Wire_EEPROM.h> 
+#include <ISA.h>  //isa can shunt library
 
 
 
@@ -49,8 +54,14 @@ template<class T> inline Print &operator <<(Print &obj, T arg) { obj.print(arg);
 CAN_FRAME outFrame;  //A structured variable according to due_can library for transmitting CAN data.
 CAN_FRAME inFrame;    //structure to keep inbound inFrames
 
+//////timers//////////////////////////////
+Metro timer_Frames10 = Metro(10);
+Metro timer_Frames100 = Metro(100);
+Metro timer_wifi = Metro(1100);
+Metro timer_hv = Metro(1000);
 
 
+int inv_volts_local;
 int16_t final_torque_request = 0;
 #define INVERTER_BITS_PER_VOLT 2
 #define INVERTER_BITS_PER_RPM 2
@@ -68,9 +79,11 @@ int led = 13;         //onboard led for diagnosis
 #define OUT3  50      //Low side switched general purpose digital output 3. high = on.
 /////////////////////////////////////////////////////////////////////////////////
 
+#define HVPreset 340 //voltage at which to enable main contactor
 
-
-
+uint16_t ThrotVal =0; //analog value of throttle position.
+uint16_t outRPM;      //calculated value of rpm for e46 ike
+static int16_t MaxTrq=2000;  //max torque request
 struct InverterStatus {
   uint16_t voltage = 0;
   int16_t speed = 0;
@@ -80,33 +93,41 @@ struct InverterStatus {
 } inverter_status;
 
 String readString;
+byte ABSMsg=0x11;
+uint8_t tempValue; //value to send to e46 temp gauge.
 
+bool T15Status; //flag to keep status of Terminal 15 from In1
+bool can_status;  //flag for turning off and on can sending.
+bool Pch_Flag;    //precharge status flag
+bool HV_Flag;     //hv on flag
 
+ISA Sensor;  //Instantiate ISA Module Sensor object to measure current and voltage 
 
 void setup() 
   {
   Can0.begin(CAN_BPS_500K);   // Inverter CAN
   Can1.begin(CAN_BPS_500K);   // Vehicle CAN
+  //Can0.watchFor(0x1da); //set message filter for inverter can. Note sure if I can use two seperate values here. it might just pick 1!
   Can0.watchFor();
-  Can1.watchFor();
+  Can1.watchFor(0x1ff); //just a blank message to block receive from e46 messages.
     
-    Serial.begin(115200);  //Initialize our USB port which will always be redefined as SerialUSB to use the Native USB port tied directly to the SAM3X processor.
-    Serial2.begin(115200);  //Serial comms with ESP32 WiFi module on serial 2
-    Timer3.attachInterrupt(Msgs10ms).start(10000); // 10ms CAN Message Timer
-    Timer4.attachInterrupt(Msgs100ms).start(100000); //100ms CAN Message Timer
+  Serial.begin(115200);  //Initialize our USB port which will always be redefined as SerialUSB to use the Native USB port tied directly to the SAM3X processor.
+  Serial2.begin(19200);  //Serial comms with ESP32 WiFi module on serial 2
+  // Timer3.attachInterrupt(Msgs10ms).start(10000); // 10ms CAN Message Timer
+  // Timer4.attachInterrupt(Msgs100ms).start(100000); //100ms CAN Message Timer
     
   pinMode(led, OUTPUT);
   pinMode(Brake, INPUT);
-  pinMode(IN1, INPUT);
+  pinMode(IN1, INPUT);  //T15 input from ign on switch
   pinMode(IN2, INPUT);
   pinMode(OUT1, OUTPUT);
   pinMode(OUT2, OUTPUT);
   pinMode(OUT3, OUTPUT);
   
-  digitalWrite(led, HIGH);
-  digitalWrite(OUT1, LOW);
-  digitalWrite(OUT2, LOW); 
-  digitalWrite(OUT3, LOW);
+  //digitalWrite(led, HIGH);
+  digitalWrite(OUT1, LOW);  //precharge
+  digitalWrite(OUT2, LOW);  //main contactor
+  digitalWrite(OUT3, LOW);  //inverter power
   
 
  
@@ -116,35 +137,133 @@ void setup()
   
 void loop()
 { 
+Check_T15();  //is the ignition on?  
+if (timer_hv.check()) HV_Con(); //control hv system
+Msgs100ms();  //fire the 100ms can messages
+Msgs10ms();   //fire the 10ms can messages
+readPedals(); //read throttle and brake pedal status.
+SendTorqueRequest();  //send torque request to inverter.
+ProcessRPM(); //send rpm and temp to e46 instrument cluster
+CheckCAN(); //check for incoming can
+handle_wifi();  //send wifi data
 
-delay(10);
-checkCAN();
-
-  while (Serial.available()) {
-    char c = Serial.read();  //gets one byte from serial buffer
-    readString += c; //makes the string readString
-    delay(2);  //slow looping to allow buffer to fill with next character
-  }
-
-  if (readString.length() >0) {
-   // Serial.println(readString);  //so you can see the captured string
-    final_torque_request = readString.toInt();  //convert readString into a number
-
-  }
-
-        readString=""; //empty for next input
 }
 
+void Check_T15()
+{
+if (digitalRead(IN1))
+{
+T15Status=true;
+can_status=true;
+}
+else
+{
+T15Status=false;
+can_status=false;
+Pch_Flag=false;
+HV_Flag=false;
+inv_volts_local==0;
+}
 
+}
+
+void HV_Con()
+{
+
+  inv_volts_local=(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
+
+
+if (T15Status && !Pch_Flag)  //if terminal 15 is on and precharge not enabled
+{
+  digitalWrite(OUT3, HIGH);  //inverter power on
+  if(inv_volts_local<200)
+  {
+  digitalWrite(OUT1, HIGH);  //precharge on
+  Pch_Flag=true;
+  }
+}
+if (T15Status && !HV_Flag && Pch_Flag)  //using inverter measured hv for initial tests. Will use ISA derived voltage in final version.
+{
+  if (inv_volts_local>340)
+  {
+  digitalWrite(OUT2, HIGH);  //main contactor on
+  HV_Flag=true;  //hv on flag
+  }
+}
+
+if (!T15Status)
+{
+  digitalWrite(OUT1, LOW);  //precharge off
+  digitalWrite(OUT2, LOW);  //main contactor off
+  digitalWrite(OUT3, LOW);  //inverter power off
+  
+}
+
+}
+
+void handle_wifi(){
+  if (timer_wifi.check())
+  {
+/*
+ * 
+ * Routine to send data to wifi on serial 2
+The information will be provided over serial to the esp8266 at 19200 baud 8n1 in the form :
+vxxx,ixxx,pxxx,mxxxx,oxxx,rxxx* where :
+
+v=pack voltage (0-700Volts)
+i=current (0-1000Amps)
+p=power (0-300kw)
+m=motor rpm (0-10000rpm)
+o=motor temp (-20 to 120C)
+r=inverter temp (-20 to 120C)
+*=end of string
+xxx=three digit integer for each parameter eg p100 = 100kw.
+updates will be every 1100ms approx.
+
+v100,i200,p35,m3000,o20,r100*
+*/
+  
+//Serial2.print("v100,i200,p35,m3000,o20,r100*"); //test string
+
+digitalWrite(13,!digitalRead(13));//blink led every time we fire this interrrupt.
+      Serial.print(inv_volts_local);
+      Serial.print(F(" Volts"));
+      Serial.println();
+      Serial.println(HV_Flag);
+
+Serial2.print("v");//dc bus voltage
+Serial2.print(Sensor.Voltage);//voltage derived from ISA shunt
+Serial2.print(",i");//dc current
+Serial2.print(Sensor.Amperes);//current derived from ISA shunt
+Serial2.print(",p");//total motor power
+Serial2.print(Sensor.KW);//Power value derived from ISA Shunt
+Serial2.print(",m");//motor rpm
+Serial2.print(inverter_status.speed);
+Serial2.print(",o");//motor temp
+Serial2.print(inverter_status.motor_temperature);
+Serial2.print(",r");//inverter temp
+Serial2.print(inverter_status.inverter_temperature);
+Serial2.print("*");// end of data indicator
+  }
+}
+
+  
 
 
 
 void Msgs10ms()                       //10ms messages here
 {
-
+if(timer_Frames10.check())
+{
+  if(can_status)
+  {
+    
+  
   static uint8_t counter_11a_d6 = 0;
   static uint8_t counter_1d4 = 0;
   static uint8_t counter_1db = 0;
+   static uint8_t counter_329 = 0;
+    static uint8_t counter_100ms = 0;
 
   // Send VCM gear selection signal (gets rid of P3197)
   
@@ -249,14 +368,14 @@ void Msgs10ms()                       //10ms messages here
     if(final_torque_request != last_logged_final_torque_request){
       last_logged_final_torque_request = final_torque_request;
       //log_print_timestamp();
-      Serial.print(F("Sending torque request "));
-      Serial.print(final_torque_request);
-      Serial.print(F(" (speed: "));
-      Serial.print(inverter_status.speed / INVERTER_BITS_PER_RPM);
-      Serial.print(F(" rpm)"));
-      Serial.print(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
-      Serial.print(F(" Volts)"));
-      Serial.println();
+      //Serial.print(F("Sending torque request "));
+      //Serial.print(final_torque_request);
+      //Serial.print(F(" (speed: "));
+      //Serial.print(inverter_status.speed / INVERTER_BITS_PER_RPM);
+      //Serial.print(F(" rpm)"));
+      //Serial.print(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
+      //Serial.print(F(" Volts)"));
+      //Serial.println();
     }
     if(final_torque_request >= -2048 && final_torque_request <= 2047){
       outFrame.data.bytes[2] = ((final_torque_request < 0) ? 0x80 : 0) |
@@ -399,26 +518,63 @@ void Msgs10ms()                       //10ms messages here
 
         Can0.sendFrame(outFrame);
 
+///////////////Originally sent as 100ms messages.///////////////////////////////////////////
 
+  
+
+        outFrame.id = 0x50b;            // Set our transmission address ID
+        outFrame.length = 7;            // Data payload 8 bytes
+        outFrame.extended = 0;          // Extended addresses - 0=11-bit 1=29bit
+        outFrame.rtr=1;                 //No request
+    // Statistics from 2016 capture:
+    //     10 00000000000000
+    //     21 000002c0000000
+    //    122 000000c0000000
+    //    513 000006c0000000
+
+    // Let's just send the most common one all the time
+    // FIXME: This is a very sloppy implementation
+  //  hex_to_data(outFrame.data.bytes, "00,00,06,c0,00,00,00");
+        outFrame.data.bytes[0]=0x00;
+        outFrame.data.bytes[1]=0x00;  
+        outFrame.data.bytes[2]=0x06;
+        outFrame.data.bytes[3]=0xc0;
+        outFrame.data.bytes[4]=0x00;
+        outFrame.data.bytes[5]=0x00;
+        outFrame.data.bytes[6]=0x00;
+
+    /*CONSOLE.print(F("Sending "));
+    print_fancy_inFrame(inFrame);
+    CONSOLE.println();*/
+        Can0.sendFrame(outFrame); 
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 //these messages go out on vehicle can and are specific to driving the E46 instrument cluster etc.
+
+//////////////////////DME Messages //////////////////////////////////////////////////////////
 
         outFrame.id = 0x316;            // Set our transmission address ID
         outFrame.length = 8;            // Data payload 8 bytes
         outFrame.extended = 0;          // Extended addresses - 0=11-bit 1=29bit
         outFrame.rtr=1;                 //No request
-        outFrame.data.bytes[0]=0x00;
-        outFrame.data.bytes[1]=0x07;  
-        outFrame.data.bytes[2]=0xff;  //RPM LSB
-        outFrame.data.bytes[3]=0x4f;  //RPM MSB [RPM=(hex2dec("byte3"&"byte2"))/6.4]
-        outFrame.data.bytes[4]=0x65;
-        outFrame.data.bytes[5]=0x12;
+        outFrame.data.bytes[0]=0x05;
+        outFrame.data.bytes[1]=0x00;
+        outFrame.data.bytes[2]=lowByte(outRPM);  //RPM LSB
+        outFrame.data.bytes[3]=highByte(outRPM);  //RPM MSB [RPM=(hex2dec("byte3"&"byte2"))/6.4]  0x12c0 should be 750rpm on tach
+       // outFrame.data.bytes[2]=0xc0;  //RPM LSB
+       // outFrame.data.bytes[3]=0x12;  //RPM MSB [RPM=(hex2dec("byte3"&"byte2"))/6.4]  0x12c0 should be 750rpm on tach
+ //       outFrame.data.bytes[2]=0xff;  //RPM LSB
+ //       outFrame.data.bytes[3]=0x4f;  //RPM MSB [RPM=(hex2dec("byte3"&"byte2"))/6.4]  0x4fff gives 3200rpm on tach
+        outFrame.data.bytes[4]=0x00;
+        outFrame.data.bytes[5]=0x00;
         outFrame.data.bytes[6]=0x00;
-        outFrame.data.bytes[7]=0x62;
+        outFrame.data.bytes[7]=0x00;
         Can1.sendFrame(outFrame);
 
-        
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////        
 
 
   //********************temp sense  *******************************
@@ -438,7 +594,8 @@ void Msgs10ms()                       //10ms messages here
 // MAP program statement: map(value, fromLow, fromHigh, toLow, toHigh)
 
  // if(tempValue < 964){  //if pin voltage < mid point value 
- //   tempValue= map(tempValue,22,963,86,173); //Map lower half of range
+tempValue= inverter_status.inverter_temperature;  //read temp from leaf inverter can.
+tempValue= map(tempValue,15,80,88,254); //Map to e46 temp gauge
  //   }
 //  else {
  //   tempValue= map(tempValue,964,1014,219,254); //Map upper half of range
@@ -449,15 +606,24 @@ void Msgs10ms()                       //10ms messages here
         outFrame.length = 8;            // Data payload 8 bytes
         outFrame.extended = 0;          // Extended addresses - 0=11-bit 1=29bit
         outFrame.rtr=1;                 //No request
-        outFrame.data.bytes[0]=0x07;  //was D9
-        outFrame.data.bytes[1]=0x193; //tempValue; //temp bit tdata 
-        outFrame.data.bytes[2]=0xB2;
-        outFrame.data.bytes[3]=0x19;
+        outFrame.data.bytes[0]=ABSMsg;  //needs to cycle 11,86,d9
+        outFrame.data.bytes[1]=tempValue; //temp bit tdata 
+        outFrame.data.bytes[2]=0xc5;
+        outFrame.data.bytes[3]=0x00;
         outFrame.data.bytes[4]=0x00;
-        outFrame.data.bytes[5]=0xEE; //Throttle position currently just fixed value
+        outFrame.data.bytes[5]=0x00; //Throttle position currently just fixed value
         outFrame.data.bytes[6]=0x00;
         outFrame.data.bytes[7]=0x00;
         Can1.sendFrame(outFrame);
+
+
+    counter_329++;
+    if(counter_329 >= 22) counter_329 = 0;
+    if(counter_329==0) ABSMsg=0x11;
+    if(counter_329==8) ABSMsg=0x86;
+    if(counter_329==15) ABSMsg=0xd9;
+   
+    
 
 
 
@@ -493,6 +659,9 @@ void Msgs10ms()                       //10ms messages here
         Can1.sendFrame(outFrame);
 
 
+
+}
+}
  
     }
     
@@ -501,7 +670,12 @@ void Msgs10ms()                       //10ms messages here
 
 void Msgs100ms()                      ////100ms messages here
 {
-  digitalWrite(led, !digitalRead(led)); //toggle led everytime we fire the 100ms messages.
+if(timer_Frames100.check())
+{
+  if(can_status)
+   {
+
+//  digitalWrite(led, !digitalRead(led)); //toggle led everytime we fire the 100ms messages.
 
         outFrame.id = 0x50b;            // Set our transmission address ID
         outFrame.length = 7;            // Data payload 8 bytes
@@ -528,22 +702,64 @@ void Msgs100ms()                      ////100ms messages here
     print_fancy_inFrame(inFrame);
     CONSOLE.println();*/
         Can0.sendFrame(outFrame); 
+}
+}      
+}
 
 
 
+void readPedals()
+{
+ThrotVal = analogRead(Throttle1); //read throttle channel 1 directly
+ThrotVal = constrain(ThrotVal, 145, 620);
+ThrotVal = map(ThrotVal, 145, 620, 0, MaxTrq); //will need to work here for cal.
+if(ThrotVal<0) ThrotVal=0;  //no negative numbers for now.
+if(digitalRead(Brake)) ThrotVal=0;  //if brake is pressed we zero the throttle value.
+//Serial.println(ThrotVal);   //print for calibration. 
+}
 
+
+
+void SendTorqueRequest()
+{
+
+final_torque_request = ThrotVal;  //send mapped throttle signal to inverter.  
+  
+}
+
+
+
+void ProcessRPM() //here we convert motor rpm values received from the leaf inverter into BMW E46 RPM can message.
+{
+outRPM = (inverter_status.speed)*6.4;
+if(outRPM<4800) outRPM=4800;  //set lowest rpm to 750 displayed on tach to keep car alive thinking engine is running.
+if(outRPM>44800) outRPM=44800;  //DONT READ MORE THAN 7000RPM!
+//Serial.println(outRPM);  
 }
 
 
 
 
-void checkCAN()
+static int8_t fahrenheit_to_celsius(uint16_t fahrenheit)
+{
+  int16_t result = ((int16_t)fahrenheit - 32) * 5 / 9;
+  if(result < -128)
+    return -128;
+  if(result > 127)
+    return 127;
+  return result;
+}
+
+void CheckCAN()
 {
 
-  while(Can0.available())
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+//read incomming data from inverter//////////////////
+//////////////////////////////////////////////////////
+  if(Can0.available())
   {
     Can0.read(inFrame);
-   // Serial.println(inFrame.id, HEX);
+    //Serial.println(inFrame.id, HEX);
   
 
   if(inFrame.id == 0x1da && inFrame.length == 8){
@@ -564,24 +780,15 @@ void checkCAN()
 
     inverter_status.inverter_temperature = fahrenheit_to_celsius(inFrame.data.bytes[2]);
     inverter_status.motor_temperature = fahrenheit_to_celsius(inFrame.data.bytes[1]);
+    //Serial.println(inverter_status.inverter_temperature);
   }
 
   }
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+
   
 }
-
-
-static int8_t fahrenheit_to_celsius(uint16_t fahrenheit)
-{
-  int16_t result = ((int16_t)fahrenheit - 32) * 5 / 9;
-  if(result < -128)
-    return -128;
-  if(result > 127)
-    return 127;
-  return result;
-}
-
-
 
 static void nissan_crc(uint8_t *data, uint8_t polynomial)
 {

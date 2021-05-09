@@ -1,49 +1,42 @@
+//I botched this program rather badly! This is an Armature Racing project, which means ruthless appropriation of code, and I did not hold back.
+//See (https://github.com/damienmaguire/Nissan-Leaf-Inverter-Controller/blob/master/Software/Leaf_Gen1_5.ino)
+
+
+
 /*
 Leaf Gen1 Inverter driver. Alpha software for testing.
 Runs on the Arduino Due SAM3X8E MCU. V1 Leaf open source vcu.
 Enter torque request on serial window.
 As of now only responds to negative torque requests. e.g. -10
 Positive torque requests trigger the inverter pwm but do not rotate the motor.
-
 V5 incorporates ISA can shunt on CAN0. Let's hope the leaf inverter doesnt mind the isa messages and vice versa:)
 WiFi on Serial2.
 Precharge control : out1 = precharge , out2= main contactor
-
-
 Copyright 2019 
 Perttu Ahola (all the hard work!)
 http://productions.8dromeda.net/c55-leaf-inverter-protocol.html
-
 Damien Maguire (copy and paste).
 OpenSource VCU hardware design available on Github :
 https://github.com/damienmaguire/Nissan-Leaf-Inverter-Controller
-
 2011 Nisan Leaf Gen 1 EV CAN logs on Github:
 https://github.com/damienmaguire/LeafLogs
-
-
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
-
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
-
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-
-
 */
 #include <Metro.h>
 #include <due_can.h>  
 #include <due_wire.h> 
 #include <DueTimer.h>  
 #include <Wire_EEPROM.h> 
-#include <ISA.h>  //isa can shunt library
+//#include <ISA.h>  //isa can shunt library
 
 
 
@@ -101,7 +94,7 @@ bool can_status;  //flag for turning off and on can sending.
 bool Pch_Flag;    //precharge status flag
 bool HV_Flag;     //hv on flag
 
-ISA Sensor;  //Instantiate ISA Module Sensor object to measure current and voltage 
+//ISA Sensor;  //Instantiate ISA Module Sensor object to measure current and voltage 
 
 void setup() 
   {
@@ -137,21 +130,22 @@ void setup()
   
 void loop()
 { 
-Check_T15();  //is the ignition on?  
-if (timer_hv.check()) HV_Con(); //control hv system
-Msgs100ms();  //fire the 100ms can messages
-Msgs10ms();   //fire the 10ms can messages
-readPedals(); //read throttle and brake pedal status.
-SendTorqueRequest();  //send torque request to inverter.
-ProcessRPM(); //send rpm and temp to e46 instrument cluster
-CheckCAN(); //check for incoming can
-handle_wifi();  //send wifi data
+  Check_T15();  //is the ignition on?  
+  if (timer_hv.check()) HV_Con(); //control hv system
+  Msgs100ms();  //fire the 100ms can messages
+  Msgs10ms();   //fire the 10ms can messages
+  readPedals(); //read throttle and brake pedal status.
+  SendTorqueRequest();  //send torque request to inverter.
+  //ProcessRPM(); //send rpm and temp to e46 instrument cluster
+  CheckCAN(); //check for incoming can
+  handle_wifi();  //send wifi data
 
 }
 
 void Check_T15()
 {
-if (digitalRead(IN1))
+//if (digitalRead(IN1))//                                                                   Pretty freaking spoofed. Very unsafe.
+if(true)
 {
 T15Status=true;
 can_status=true;
@@ -209,7 +203,6 @@ void handle_wifi(){
  * Routine to send data to wifi on serial 2
 The information will be provided over serial to the esp8266 at 19200 baud 8n1 in the form :
 vxxx,ixxx,pxxx,mxxxx,oxxx,rxxx* where :
-
 v=pack voltage (0-700Volts)
 i=current (0-1000Amps)
 p=power (0-300kw)
@@ -219,12 +212,11 @@ r=inverter temp (-20 to 120C)
 *=end of string
 xxx=three digit integer for each parameter eg p100 = 100kw.
 updates will be every 1100ms approx.
-
 v100,i200,p35,m3000,o20,r100*
 */
   
 //Serial2.print("v100,i200,p35,m3000,o20,r100*"); //test string
-
+/*
 digitalWrite(13,!digitalRead(13));//blink led every time we fire this interrrupt.
       Serial.print(inv_volts_local);
       Serial.print(F(" Volts"));
@@ -232,7 +224,7 @@ digitalWrite(13,!digitalRead(13));//blink led every time we fire this interrrupt
       Serial.println(HV_Flag);
 
 Serial2.print("v");//dc bus voltage
-Serial2.print(Sensor.Voltage);//voltage derived from ISA shunt
+//Serial2.print(Sensor.Voltage);//voltage derived from ISA shunt
 Serial2.print(",i");//dc current
 Serial2.print(Sensor.Amperes);//current derived from ISA shunt
 Serial2.print(",p");//total motor power
@@ -244,6 +236,7 @@ Serial2.print(inverter_status.motor_temperature);
 Serial2.print(",r");//inverter temp
 Serial2.print(inverter_status.inverter_temperature);
 Serial2.print("*");// end of data indicator
+  */
   }
 }
 
@@ -708,9 +701,12 @@ if(timer_Frames100.check())
 
 
 
-void readPedals()
+void readPedals()//                                                                                       Super spoofed. Amazing.
 {
-ThrotVal = analogRead(Throttle1); //read throttle channel 1 directly
+//ThrotVal = analogRead(Throttle1); //read throttle channel 1 directly
+
+ThrotVal = 223;
+
 ThrotVal = constrain(ThrotVal, 145, 620);
 ThrotVal = map(ThrotVal, 145, 620, 0, MaxTrq); //will need to work here for cal.
 if(ThrotVal<0) ThrotVal=0;  //no negative numbers for now.
