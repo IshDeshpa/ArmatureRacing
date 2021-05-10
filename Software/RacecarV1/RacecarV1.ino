@@ -1,4 +1,4 @@
-//I botched this program rather badly! This is an Armature Racing project, which means ruthless appropriation of code, and I did not hold back.
+//This code is a duplicate of Damien Maguire's, with a few tweaks to suit our Formula Student Electric imitation. http://www.armatureracing.com/#/%22
 //See (https://github.com/damienmaguire/Nissan-Leaf-Inverter-Controller/blob/master/Software/Leaf_Gen1_5.ino)
 
 
@@ -11,7 +11,8 @@ As of now only responds to negative torque requests. e.g. -10
 Positive torque requests trigger the inverter pwm but do not rotate the motor.
 V5 incorporates ISA can shunt on CAN0. Let's hope the leaf inverter doesnt mind the isa messages and vice versa:)
 WiFi on Serial2.
-Precharge control : out1 = precharge , out2= main contactor
+Precharge control : out1 (renamed PreChg) = precharge , out2 (renamed SysMain1) = Li-ion bat relay on PreChg rail
+                    new var: SysMain2 = Li-ion bat relay on it own rail
 Copyright 2019 
 Perttu Ahola (all the hard work!)
 http://productions.8dromeda.net/c55-leaf-inverter-protocol.html
@@ -67,9 +68,11 @@ int led = 13;         //onboard led for diagnosis
 #define Brake 61      //Brake pedal switch. High = brake on
 #define IGN 6         //General purpose digital input 1. High =12v
 #define IN2 7         //General purpose digital input 2. High =12v
-#define OUT1  48      //Low side switched general purpose digital output 1. high = on.
-#define OUT2  49      //Low side switched general purpose digital output 2. high = on.
-#define OUT3  50      //Low side switched general purpose digital output 3. high = on.
+
+#define PreChg  48    //Low side switched general purpose digital output 1. high = on.
+#define SysMain1  49  //Low side switched general purpose digital output 2. high = on.
+#define SysMain2  50  //Low side switched general purpose digital output 2. high = on.
+#define OUT3  51      //Low side switched general purpose digital output 3. high = on.
 /////////////////////////////////////////////////////////////////////////////////
 
 #define HVPreset 340 //voltage at which to enable main contactor
@@ -113,13 +116,15 @@ void setup()
   pinMode(Brake, INPUT);
   pinMode(IGN, INPUT);  //T15 input from ign on switch
   pinMode(IN2, INPUT);
-  pinMode(OUT1, OUTPUT);
-  pinMode(OUT2, OUTPUT);
+  pinMode(PreChg, OUTPUT);
+  pinMode(SysMain1, OUTPUT);
+  pinMode(SysMain2, OUTPUT);
   pinMode(OUT3, OUTPUT);
   
   //digitalWrite(led, HIGH);
-  digitalWrite(OUT1, LOW);  //precharge
-  digitalWrite(OUT2, LOW);  //main contactor
+  digitalWrite(PreChg, LOW);  //precharge
+  digitalWrite(SysMain1, LOW);  //main contactor on precharge rail
+  digitalWrite(SysMain2, LOW);  //other rail main contactor
   digitalWrite(OUT3, LOW);  //inverter power
   
 
@@ -144,7 +149,7 @@ void loop()
 
 void Check_T15()
 {
-//if (digitalRead(IGN))//                                                                   Pretty freaking spoofed. Very unsafe.
+//if (digitalRead(IGN))//                                                                   Pretty freaking spoofed. Use this code for on/off switch later
   if(true)
   {
     T15Status=true;
@@ -167,31 +172,33 @@ void HV_Con()
   inv_volts_local=(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
 
 
-if (T15Status && !Pch_Flag)  //if terminal 15 is on and precharge not enabled
-{
-  digitalWrite(OUT3, HIGH);  //inverter power on
-  if(inv_volts_local<200)
+  if (T15Status && !Pch_Flag)  //if terminal 15 is on and precharge not enabled
   {
-  digitalWrite(OUT1, HIGH);  //precharge on
-  Pch_Flag=true;
+    digitalWrite(OUT3, HIGH);  //inverter power on
+    digitalWrite(SysMain2, HIGH);  //main contactor on (for 1 rail)
+    if(inv_volts_local<200)
+    {
+      digitalWrite(PreChg, HIGH);  //precharge on
+      Pch_Flag=true;
+    }
   }
-}
-if (T15Status && !HV_Flag && Pch_Flag)  //using inverter measured hv for initial tests. Will use ISA derived voltage in final version.
-{
-  if (inv_volts_local>340)
+  if (T15Status && !HV_Flag && Pch_Flag)  //using inverter measured hv for initial tests. Will use ISA derived voltage in final version.
   {
-  digitalWrite(OUT2, HIGH);  //main contactor on
-  HV_Flag=true;  //hv on flag
+    if (inv_volts_local>340)
+    {
+      digitalWrite(SysMain1, HIGH);  //main contactor on
+      HV_Flag=true;  //hv on flag
+    }
   }
-}
-
-if (!T15Status)
-{
-  digitalWrite(OUT1, LOW);  //precharge off
-  digitalWrite(OUT2, LOW);  //main contactor off
-  digitalWrite(OUT3, LOW);  //inverter power off
   
-}
+  if (!T15Status)
+  {
+    digitalWrite(PreChg, LOW);  //precharge off
+    digitalWrite(SysMain1, LOW);  //main contactor off
+    digitalWrite(SysMain2, LOW);  //main contactor off
+    digitalWrite(OUT3, LOW);  //inverter power off
+    
+  }
 
 }
 
