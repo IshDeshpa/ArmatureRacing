@@ -65,7 +65,7 @@ int led = 13;         //onboard led for diagnosis
 #define Throttle1 A0  //Analog throttle channel 1
 #define Throttle2 A1  //Analog throttle channel 2
 #define Brake 61      //Brake pedal switch. High = brake on
-#define IN1 6         //General purpose digital input 1. High =12v
+#define IGN 6         //General purpose digital input 1. High =12v
 #define IN2 7         //General purpose digital input 2. High =12v
 #define OUT1  48      //Low side switched general purpose digital output 1. high = on.
 #define OUT2  49      //Low side switched general purpose digital output 2. high = on.
@@ -104,14 +104,14 @@ void setup()
   Can0.watchFor();
   Can1.watchFor(0x1ff); //just a blank message to block receive from e46 messages.
     
-    Serial.begin(115200);  //Initialize our USB port which will always be redefined as SerialUSB to use the Native USB port tied directly to the SAM3X processor.
-    Serial2.begin(19200);  //Serial comms with ESP32 WiFi module on serial 2
-   // Timer3.attachInterrupt(Msgs10ms).start(10000); // 10ms CAN Message Timer
-   // Timer4.attachInterrupt(Msgs100ms).start(100000); //100ms CAN Message Timer
+  Serial.begin(115200);  //Initialize our USB port which will always be redefined as SerialUSB to use the Native USB port tied directly to the SAM3X processor.
+  Serial2.begin(19200);  //Serial comms with ESP32 WiFi module on serial 2
+ // Timer3.attachInterrupt(Msgs10ms).start(10000); // 10ms CAN Message Timer
+ // Timer4.attachInterrupt(Msgs100ms).start(100000); //100ms CAN Message Timer
     
   pinMode(led, OUTPUT);
   pinMode(Brake, INPUT);
-  pinMode(IN1, INPUT);  //T15 input from ign on switch
+  pinMode(IGN, INPUT);  //T15 input from ign on switch
   pinMode(IN2, INPUT);
   pinMode(OUT1, OUTPUT);
   pinMode(OUT2, OUTPUT);
@@ -144,20 +144,20 @@ void loop()
 
 void Check_T15()
 {
-//if (digitalRead(IN1))//                                                                   Pretty freaking spoofed. Very unsafe.
-if(true)
-{
-T15Status=true;
-can_status=true;
-}
-else
-{
-T15Status=false;
-can_status=false;
-Pch_Flag=false;
-HV_Flag=false;
-inv_volts_local==0;
-}
+//if (digitalRead(IGN))//                                                                   Pretty freaking spoofed. Very unsafe.
+  if(true)
+  {
+    T15Status=true;
+    can_status=true;
+  }
+  else
+  {
+    T15Status=false;
+    can_status=false;
+    Pch_Flag=false;
+    HV_Flag=false;
+    inv_volts_local==0;
+  }
 
 }
 
