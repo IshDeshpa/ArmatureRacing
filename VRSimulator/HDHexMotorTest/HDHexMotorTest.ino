@@ -32,5 +32,5 @@ void loop() {
 //  delay(pulseWidthMs);
 //  digitalWrite(pwmPin, LOW);
 //  delay(pdMs - pulseWidthMs);
-  motor.writeMicroseconds(2000);
+  motor.writeMicroseconds(1500);
 }
