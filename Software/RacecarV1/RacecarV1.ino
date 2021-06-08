@@ -66,13 +66,16 @@ int led = 13;         //onboard led for diagnosis
 #define Throttle1 A0  //Analog throttle channel 1
 #define Throttle2 A1  //Analog throttle channel 2
 #define Brake 61      //Brake pedal switch. High = brake on
-#define IGN 6         //General purpose digital input 1. High =12v
+#define IgnSwitch 51         //General purpose digital input 1. High =12v
 #define IN2 7         //General purpose digital input 2. High =12v
 
-#define PreChg  48    //Low side switched general purpose digital output 1. high = on.
-#define SysMain1  49  //Low side switched general purpose digital output 2. high = on.
-#define SysMain2  50  //Low side switched general purpose digital output 2. high = on.
-#define OUT3  51      //Low side switched general purpose digital output 3. high = on.
+#define MC  2      // Motor controller relay
+#define Ign 3      // Ignition relay
+#define Failsafe 4    // Failsafe relay
+#define FailsafeChg 5   // Failsafe Charge Relay
+#define PreChg  6    // Precharge Relay
+#define SysMain1  7  // System Main 1 Relay (signals relay inside battery)
+#define SysMain2  8  // System Main 2 Relay (signals relay inside battery)
 /////////////////////////////////////////////////////////////////////////////////
 
 #define HVPreset 340 //voltage at which to enable main contactor
@@ -99,13 +102,22 @@ bool HV_Flag;     //hv on flag
 
 //ISA Sensor;  //Instantiate ISA Module Sensor object to measure current and voltage 
 
+/*
+White, pin 2: MC Relay
+Grey, pin 3: IGN Relay
+First Orange, pin 4: Failsafe Relay
+Red, pin 5: Failsafe Charge Relay
+Brown, pin 6: Precharge Relay
+Yellow, pin 7: System Main 1 Relay
+Orange, pin 8: System Main 2 Relay
+*/
 void setup() 
   {
   Can0.begin(CAN_BPS_500K);   // Inverter CAN
-  Can1.begin(CAN_BPS_500K);   // Vehicle CAN
+  //Can1.begin(CAN_BPS_500K);   // Vehicle CAN
   //Can0.watchFor(0x1da); //set message filter for inverter can. Note sure if I can use two seperate values here. it might just pick 1!
   Can0.watchFor();
-  Can1.watchFor(0x1ff); //just a blank message to block receive from e46 messages.
+  //Can1.watchFor(0x1ff); //just a blank message to block receive from e46 messages.
     
   Serial.begin(115200);  //Initialize our USB port which will always be redefined as SerialUSB to use the Native USB port tied directly to the SAM3X processor.
   Serial2.begin(19200);  //Serial comms with ESP32 WiFi module on serial 2
@@ -114,22 +126,27 @@ void setup()
     
   pinMode(led, OUTPUT);
   pinMode(Brake, INPUT);
-  pinMode(IGN, INPUT);  //T15 input from ign on switch
-  pinMode(IN2, INPUT);
+  pinMode(IgnSwitch, INPUT);  //T15 input from ign on switch, NOT USED
+  //pinMode(IN2, INPUT);
+
+  pinMode(MC, OUTPUT);
+  pinMode(Ign, OUTPUT);
+  pinMode(Failsafe, OUTPUT);
+  pinMode(FailsafeChg, OUTPUT);
   pinMode(PreChg, OUTPUT);
   pinMode(SysMain1, OUTPUT);
   pinMode(SysMain2, OUTPUT);
-  pinMode(OUT3, OUTPUT);
+  
   
   //digitalWrite(led, HIGH);
+  digitalWrite(MC, LOW);
+  digitalWrite(Ign, LOW);
+  digitalWrite(Failsafe, LOW);
+  digitalWrite(FailsafeChg, LOW);
   digitalWrite(PreChg, LOW);  //precharge
   digitalWrite(SysMain1, LOW);  //main contactor on precharge rail
   digitalWrite(SysMain2, LOW);  //other rail main contactor
-  digitalWrite(OUT3, LOW);  //inverter power
-  
-
- 
-  }
+}
 
   
   
@@ -149,7 +166,7 @@ void loop()
 
 void Check_T15()
 {
-//if (digitalRead(IGN))//                                                                   Pretty freaking spoofed. Use this code for on/off switch later
+//if (digitalRead(IgnSwitch))//                                                                   Pretty freaking spoofed. Use this code for on/off switch later
   if(true)
   {
     T15Status=true;
@@ -174,7 +191,7 @@ void HV_Con()
 
   if (T15Status && !Pch_Flag)  //if terminal 15 is on and precharge not enabled
   {
-    digitalWrite(OUT3, HIGH);  //inverter power on
+    digitalWrite(MC, HIGH);  //inverter power on
     digitalWrite(SysMain2, HIGH);  //main contactor on (for 1 rail)
     if(inv_volts_local<200)
     {
@@ -196,7 +213,7 @@ void HV_Con()
     digitalWrite(PreChg, LOW);  //precharge off
     digitalWrite(SysMain1, LOW);  //main contactor off
     digitalWrite(SysMain2, LOW);  //main contactor off
-    digitalWrite(OUT3, LOW);  //inverter power off
+    digitalWrite(MC, LOW);  //inverter power off
     
   }
 
@@ -358,7 +375,7 @@ if(timer_Frames10.check())
     // 2016: 6E
    // outFrame.data.bytes[0] = 0x6E;
 
-    // Usually 07, but can have values between 07...70 (gen1)
+    // Usually 07, but can have values between 07...51 (gen1)
     outFrame.data.bytes[1] = 0x07;
     // 2016: 6E
     //outFrame.data.bytes[1] = 0x6E;
@@ -377,14 +394,32 @@ if(timer_Frames10.check())
       //Serial.print(F(" Volts)"));
       //Serial.println();
     }
+
+    //Check if within bounds of 12 bit number   
     if(final_torque_request >= -2048 && final_torque_request <= 2047){
-      outFrame.data.bytes[2] = ((final_torque_request < 0) ? 0x80 : 0) |
-          ((final_torque_request >> 4) & 0x7f);
+      outFrame.data.bytes[2] = ((final_torque_request < 0) ? 0x80 : 0) | // Adds 1 to the beginning if negative
+          ((final_torque_request >> 4) // Equivalent to dividing by 2^4 (16), shifts bits left by 4
+          & 0x7f); // 
       outFrame.data.bytes[3] = (final_torque_request << 4) & 0xf0;
     } else {
       outFrame.data.bytes[2] = 0x00;
       outFrame.data.bytes[3] = 0x00;
     }
+
+    /*
+
+    outFrame[2]
+    0000011111111111 (2047) - original value
+    0000011111111111 (2047) - adds sign bit
+    0000000001111111 (127) - shifts right by 4 bits
+    0000000001111111 (127) & 0000000001111111 (0x7f) = 0000000001111111 (127) - and with 0x7f (preserves all bits from 7 to 1)
+
+    outFrame[3]
+    0000011111111111 (2047) - original value
+    0111111111110000 (32752) - shifts left by 4 bits
+    0111111111110000 (32752) & 0000000011110000 (240) = 0000000011110000 (240) - and with 0xf0 (preserves all bits from 8 to 5)
+    
+    */
 
     // MSB nibble: Runs through the sequence 0, 4, 8, C
     // LSB nibble: Precharge report (precedes actual precharge
@@ -394,12 +429,16 @@ if(timer_Frames10.check())
     //   3: Precharging (0.4%)
     //   5: Starting discharge (3x10ms) (2.0%)
     //   7: Precharged (93%)
-    outFrame.data.bytes[4] = 0x07 | (counter_1d4 << 6);
+    outFrame.data.bytes[4] = 0x07 | (counter_1d4 << 6); // Bitshift counter left by 6 (11 -> 11000000, 10 -> 10000000)
+    // 0x07 is LSB nibble, counter controls MSB nibble
+    
     //outFrame.data.bytes[4] = 0x02 | (counter_1d4 << 6);
 
     counter_1d4++;
     if(counter_1d4 >= 4)
       counter_1d4 = 0;
+
+    //counter_1d4 is only ever 0, 1, 2, 3 and cycles for every loop (only ever takes up two bits)
 
     // MSB nibble:
     //   0: 35-40ms at startup when gear is 0, then at shutdown 40ms
@@ -571,7 +610,7 @@ if(timer_Frames10.check())
         outFrame.data.bytes[5]=0x00;
         outFrame.data.bytes[6]=0x00;
         outFrame.data.bytes[7]=0x00;
-        Can1.sendFrame(outFrame);
+        //Can1.sendFrame(outFrame);
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////        
@@ -614,7 +653,7 @@ tempValue= map(tempValue,15,80,88,254); //Map to e46 temp gauge
         outFrame.data.bytes[5]=0x00; //Throttle position currently just fixed value
         outFrame.data.bytes[6]=0x00;
         outFrame.data.bytes[7]=0x00;
-        Can1.sendFrame(outFrame);
+        //Can1.sendFrame(outFrame);
 
 
     counter_329++;
@@ -656,7 +695,7 @@ tempValue= map(tempValue,15,80,88,254); //Map to e46 temp gauge
         outFrame.data.bytes[5]=0x10; 
         outFrame.data.bytes[6]=0x00;
         outFrame.data.bytes[7]=0x18;
-        Can1.sendFrame(outFrame);
+        //Can1.sendFrame(outFrame);
 
 
 
@@ -793,6 +832,7 @@ void CheckCAN()
   
 }
 
+// Cyclic redundancy check, used to ensure that message is transferred without packet loss
 static void nissan_crc(uint8_t *data, uint8_t polynomial)
 {
   // We want to process 8 bytes with the 8th byte being zero
