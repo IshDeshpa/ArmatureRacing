@@ -32,48 +32,43 @@ https://github.com/damienmaguire/LeafLogs
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-#include <Metro.h>
+#include <Chrono.h>
 #include <due_can.h>  
 #include <due_wire.h> 
 #include <DueTimer.h>  
 #include <Wire_EEPROM.h> 
 //#include <ISA.h>  //isa can shunt library
 
-
-
 #define Serial SerialUSB
 template<class T> inline Print &operator <<(Print &obj, T arg) { obj.print(arg); return obj; }
-
 
 CAN_FRAME outFrame;  //A structured variable according to due_can library for transmitting CAN data.
 CAN_FRAME inFrame;    //structure to keep inbound inFrames
 
 //////timers//////////////////////////////
-Metro timer_Frames10 = Metro(10);
-Metro timer_Frames100 = Metro(100);
-Metro timer_wifi = Metro(1100);
-Metro timer_hv = Metro(1000);
-
+Chrono timer_Frames10 = Chrono();
+Chrono timer_Frames100 = Chrono();
+//Metro timer_wifi = Metro(1100);
+Chrono timer_hv = Chrono();
 
 int inv_volts_local;
 int16_t final_torque_request = 0;
 #define INVERTER_BITS_PER_VOLT 2
 #define INVERTER_BITS_PER_RPM 2
 
-
 ////////////////////Pin Map////////////////////////////////////////////////////
 int led = 13;         //onboard led for diagnosis
 #define Throttle1 A0  //Analog throttle channel 1
 #define Throttle2 A1  //Analog throttle channel 2
-#define Brake 61      //Brake pedal switch. High = brake on
+#define Brake A2      //Brake pedal switch. High = brake on
 #define IgnSwitch 51         //General purpose digital input 1. High =12v
 #define IN2 7         //General purpose digital input 2. High =12v
 
 #define MC  2      // Motor controller relay
 #define Ign 3      // Ignition relay
 #define Failsafe 4    // Failsafe relay
-#define FailsafeChg 5   // Failsafe Charge Relay
-#define PreChg  6    // Precharge Relay
+#define FailsafeChg 6   // Failsafe Charge Relay
+#define PreChg  5    // Precharge Relay
 #define SysMain1  7  // System Main 1 Relay (signals relay inside battery)
 #define SysMain2  8  // System Main 2 Relay (signals relay inside battery)
 /////////////////////////////////////////////////////////////////////////////////
@@ -95,21 +90,43 @@ String readString;
 byte ABSMsg=0x11;
 uint8_t tempValue; //value to send to e46 temp gauge.
 
-bool T15Status; //flag to keep status of Terminal 15 from In1
-bool can_status;  //flag for turning off and on can sending.
-bool Pch_Flag;    //precharge status flag
-bool HV_Flag;     //hv on flag
+bool T15Status=false; //flag to keep status of Terminal 15 from In1
+bool can_status=false;  //flag for turning off and on can sending.
+bool Pch_Flag=false;    //precharge status flag
+bool HV_Flag=false;     //hv on flag
 
 //ISA Sensor;  //Instantiate ISA Module Sensor object to measure current and voltage 
 
 /*
+ * OLD MOSFET BOARD
 White, pin 2: MC Relay
 Grey, pin 3: IGN Relay
 First Orange, pin 4: Failsafe Relay
-Red, pin 5: Failsafe Charge Relay
-Brown, pin 6: Precharge Relay
+Purple, pin 5: Precharge Relay
+Brown, pin 6: Failsafe Charge Relay
 Yellow, pin 7: System Main 1 Relay
 Orange, pin 8: System Main 2 Relay
+*/
+
+/*
+NEW RELAY BOARD
+Relay 8: MC Relay
+Relay 7: IGN Relay
+Relay 6: Failsafe Relay
+Relay 5: Failsafe Charge Relay
+Relay 4: System Main 1 Relay
+Relay 3: System Main 2 Relay
+Relay 2: Precharge Relay
+
+Pin 2: MC Relay
+Pin 3: IGN Relay
+Pin 4: Failsafe Relay
+Pin 5: Failsafe Charge Relay
+Pin 6: System Main 1 Relay
+Pin 7: System Main 2 Relay
+Pin 8: Precharge Relay
+
+
 */
 void setup() 
   {
@@ -119,14 +136,16 @@ void setup()
   Can0.watchFor();
   //Can1.watchFor(0x1ff); //just a blank message to block receive from e46 messages.
     
-  Serial.begin(115200);  //Initialize our USB port which will always be redefined as SerialUSB to use the Native USB port tied directly to the SAM3X processor.
-  Serial2.begin(19200);  //Serial comms with ESP32 WiFi module on serial 2
+  //Serial.begin(115200);  //Initialize our USB port which will always be redefined as SerialUSB to use the Native USB port tied directly to the SAM3X processor.
+  SerialUSB.begin(115200);
+  
+  //Serial2.begin(19200);  //Serial comms with ESP32 WiFi module on serial 2
  // Timer3.attachInterrupt(Msgs10ms).start(10000); // 10ms CAN Message Timer
  // Timer4.attachInterrupt(Msgs100ms).start(100000); //100ms CAN Message Timer
     
-  pinMode(led, OUTPUT);
-  pinMode(Brake, INPUT);
-  pinMode(IgnSwitch, INPUT);  //T15 input from ign on switch, NOT USED
+  //pinMode(led, OUTPUT);
+  //pinMode(Brake, INPUT);
+  //pinMode(IgnSwitch, INPUT);  //T15 input from ign on switch, NOT USED
   //pinMode(IN2, INPUT);
 
   pinMode(MC, OUTPUT);
@@ -146,6 +165,9 @@ void setup()
   digitalWrite(PreChg, LOW);  //precharge
   digitalWrite(SysMain1, LOW);  //main contactor on precharge rail
   digitalWrite(SysMain2, LOW);  //other rail main contactor
+  Pch_Flag=false;
+  HV_Flag=false;
+  inv_volts_local==0;
 }
 
   
@@ -153,7 +175,12 @@ void setup()
 void loop()
 { 
   Check_T15();  //is the ignition on?  
-  if (timer_hv.check()) HV_Con(); //control hv system
+  //SerialUSB.println(timer_hv.hasPassed(1000));
+  if (timer_hv.hasPassed(1000)) {
+    timer_hv.restart();
+    //SerialUSB.println("HV");
+    HV_Con();
+  } //control hv system
   Msgs100ms();  //fire the 100ms can messages
   Msgs10ms();   //fire the 10ms can messages
   readPedals(); //read throttle and brake pedal status.
@@ -161,7 +188,7 @@ void loop()
   //ProcessRPM(); //send rpm and temp to e46 instrument cluster
   CheckCAN(); //check for incoming can
   handle_wifi();  //send wifi data
-
+  
 }
 
 void Check_T15()
@@ -171,6 +198,7 @@ void Check_T15()
   {
     T15Status=true;
     can_status=true;
+    digitalWrite(Failsafe, HIGH);
   }
   else
   {
@@ -181,28 +209,37 @@ void Check_T15()
     inv_volts_local==0;
   }
 
+  
+
 }
 
 void HV_Con()
 {
 
-  inv_volts_local=(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
-
+  SerialUSB.println("HV");
+  //inv_volts_local=(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
+  inv_volts_local = 0;
 
   if (T15Status && !Pch_Flag)  //if terminal 15 is on and precharge not enabled
   {
+    SerialUSB.println("MC/IGN/Main2 RELAY ON");
     digitalWrite(MC, HIGH);  //inverter power on
+    digitalWrite(Ign, HIGH);  //ignition relay on
     digitalWrite(SysMain2, HIGH);  //main contactor on (for 1 rail)
     if(inv_volts_local<200)
     {
+      SerialUSB.println("Precharge ON");
       digitalWrite(PreChg, HIGH);  //precharge on
       Pch_Flag=true;
     }
   }
   if (T15Status && !HV_Flag && Pch_Flag)  //using inverter measured hv for initial tests. Will use ISA derived voltage in final version.
   {
+
+    SerialUSB.println("Precharging");
     if (inv_volts_local>340)
     {
+      SerialUSB.println("Main1 RELAY ON");
       digitalWrite(SysMain1, HIGH);  //main contactor on
       HV_Flag=true;  //hv on flag
     }
@@ -210,18 +247,20 @@ void HV_Con()
   
   if (!T15Status)
   {
+    SerialUSB.println("Turn off everything");
     digitalWrite(PreChg, LOW);  //precharge off
     digitalWrite(SysMain1, LOW);  //main contactor off
     digitalWrite(SysMain2, LOW);  //main contactor off
     digitalWrite(MC, LOW);  //inverter power off
-    
+    digitalWrite(Ign, LOW);  //ignition relay on
+    digitalWrite(Failsafe, LOW);
   }
 
 }
 
 void handle_wifi(){
-  if (timer_wifi.check())
-  {
+  //if (timer_wifi.check())
+  //{
 /*
  * 
  * Routine to send data to wifi on serial 2
@@ -261,7 +300,7 @@ Serial2.print(",r");//inverter temp
 Serial2.print(inverter_status.inverter_temperature);
 Serial2.print("*");// end of data indicator
   */
-  }
+  //}
 }
 
   
@@ -270,8 +309,9 @@ Serial2.print("*");// end of data indicator
 
 void Msgs10ms()                       //10ms messages here
 {
-if(timer_Frames10.check())
+if(timer_Frames10.hasPassed(10))
 {
+  timer_Frames10.restart();
   if(can_status)
   {
     
@@ -385,14 +425,14 @@ if(timer_Frames10.check())
     if(final_torque_request != last_logged_final_torque_request){
       last_logged_final_torque_request = final_torque_request;
       //log_print_timestamp();
-      //Serial.print(F("Sending torque request "));
-      //Serial.print(final_torque_request);
-      //Serial.print(F(" (speed: "));
-      //Serial.print(inverter_status.speed / INVERTER_BITS_PER_RPM);
-      //Serial.print(F(" rpm)"));
-      //Serial.print(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
-      //Serial.print(F(" Volts)"));
-      //Serial.println();
+      SerialUSB.print(F("Sending torque request "));
+      SerialUSB.print(final_torque_request);
+      SerialUSB.print(F(" (speed: "));
+      SerialUSB.print(inverter_status.speed / INVERTER_BITS_PER_RPM);
+      SerialUSB.print(F(" rpm)"));
+      SerialUSB.print(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
+      SerialUSB.print(F(" Volts)"));
+      SerialUSB.println();
     }
 
     //Check if within bounds of 12 bit number   
@@ -430,7 +470,7 @@ if(timer_Frames10.check())
     //   5: Starting discharge (3x10ms) (2.0%)
     //   7: Precharged (93%)
     outFrame.data.bytes[4] = 0x07 | (counter_1d4 << 6); // Bitshift counter left by 6 (11 -> 11000000, 10 -> 10000000)
-    // 0x07 is LSB nibble, counter controls MSB nibble
+    // First part is LSB nibble, counter controls MSB nibble
     
     //outFrame.data.bytes[4] = 0x02 | (counter_1d4 << 6);
 
@@ -531,7 +571,7 @@ if(timer_Frames10.check())
     print_fancy_inFrame(inFrame);
     Serial.println();*/
 
- Can0.sendFrame(outFrame);
+    Can0.sendFrame(outFrame);
 
 //We need to send 0x1db here with voltage measured by inverter
 
@@ -594,7 +634,7 @@ if(timer_Frames10.check())
 
 //////////////////////DME Messages //////////////////////////////////////////////////////////
 
-        outFrame.id = 0x316;            // Set our transmission address ID
+        /*outFrame.id = 0x316;            // Set our transmission address ID
         outFrame.length = 8;            // Data payload 8 bytes
         outFrame.extended = 0;          // Extended addresses - 0=11-bit 1=29bit
         outFrame.rtr=1;                 //No request
@@ -698,7 +738,7 @@ tempValue= map(tempValue,15,80,88,254); //Map to e46 temp gauge
         //Can1.sendFrame(outFrame);
 
 
-
+*/
 }
 }
  
@@ -709,8 +749,9 @@ tempValue= map(tempValue,15,80,88,254); //Map to e46 temp gauge
 
 void Msgs100ms()                      ////100ms messages here
 {
-if(timer_Frames100.check())
+if(timer_Frames100.hasPassed(100))
 {
+  timer_Frames100.restart();
   if(can_status)
    {
 
@@ -751,13 +792,25 @@ void readPedals()//                                                             
 {
 //ThrotVal = analogRead(Throttle1); //read throttle channel 1 directly
 
+/*accelerator = analogRead(accelPedalPin);
+if(accelerator < minValueAccel){
+  accelerator = minValueAccel;
+}
+else if(accelerator > maxValueAccel){
+  accelerator = maxValueAccel;  
+}
+accelerator -= minValueAccel;
+
 ThrotVal = 223;
 
 ThrotVal = constrain(ThrotVal, 145, 620);
 ThrotVal = map(ThrotVal, 145, 620, 0, MaxTrq); //will need to work here for cal.
 if(ThrotVal<0) ThrotVal=0;  //no negative numbers for now.
 if(digitalRead(Brake)) ThrotVal=0;  //if brake is pressed we zero the throttle value.
-//Serial.println(ThrotVal);   //print for calibration. 
+//Serial.println(ThrotVal);   //print for calibration. */
+  if(timer_Frames100.hasPassed(100)){
+    ThrotVal = SerialUSB.read();
+  }
 }
 
 
