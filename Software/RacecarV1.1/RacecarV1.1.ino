@@ -81,12 +81,16 @@ bool chargerCurrent380 = false;
 double LBC_Max_Power_1DC = 0;
 double OBC_Max_Power_380 = 0;
 
+uint16_t BatteryTempC = 0;
+
 bool LBC_Charge_Flag = false;
 
 uint16_t remain_capacity_gids = 0;
 uint16_t new_full_capacity_wh = 0;
 uint16_t dash_bars_capacity = 0;
 uint16_t dash_bars_charge = 0;
+uint16_t time_remaining_charge = 0;
+uint16_t charge_complete_flag = 0;
 
 uint16_t MPRUN_380 = -1;
 
@@ -135,6 +139,7 @@ void loop() {
     Serial.println("AAAAAAAAAAAAAAAAAA");  
   }*/
 
+  
   while (Serial.available()) {
     char c = Serial.read();  //gets one byte from serial buffer
     readString += c; //makes the string readString
@@ -147,6 +152,7 @@ void loop() {
 
   }
 
+  
   readString=""; //empty for next input
   
   CheckCAN();
@@ -156,9 +162,41 @@ void loop() {
     Msgs10ms();   //fire the 10ms can messages
   }
   else if(charge_enable && !global_enable){
-    Serial.println("charge enabled");
+    //Serial.println("charge enabled");
     NCRoutine();
     Msgs100ms();
+
+    if(timer_temp.hasPassed(1000)){
+      Serial.println("---------------");
+      Serial.print("OBC status: ");
+      Serial.println(charger_status);
+
+      Serial.print("LBC charge flag: ");
+      Serial.println(LBC_Charge_Flag);
+
+      Serial.print("NC Relay: ");
+      Serial.println(NC_relay_status);
+    
+      Serial.print("Battery Temp C: ");
+      Serial.println(BatteryTempC);
+    
+      Serial.print("Current gid capacity: ");
+      Serial.println(remain_capacity_gids);
+
+      Serial.print("Current charge power: ");
+      Serial.println(current_charge_power);
+
+      Serial.print("Time remaining for charge: ");
+      Serial.println(time_remaining_charge);
+
+      Serial.print("Charge complete flag: ");
+      Serial.println(charge_complete_flag);
+      
+      Serial.println("---------------");
+      
+      timer_temp.restart();
+    }
+
   }
 }
 
@@ -211,6 +249,8 @@ void HV_Con()
       digitalWrite(Ign, HIGH);  //ignition relay on
       digitalWrite(Failsafe, HIGH);
       digitalWrite(FailsafeChg, HIGH);
+      Pch_Flag = false;
+      HV_Flag = false;
     }
 
   }
@@ -222,10 +262,30 @@ void HV_Con()
       digitalWrite(Failsafe, LOW);
       digitalWrite(FailsafeChg, LOW);
       if(charge_activation || charge_constant){
-        digitalWrite(SysMain1, LOW);
-        digitalWrite(SysMain2, LOW);  
-      }
+        if (!Pch_Flag)  //if terminal 15 is on and precharge not enabled
+        {
+          digitalWrite(SysMain2, LOW);  //main contactor on (for 1 rail)
+          digitalWrite(SysMain1, HIGH);
+          if(inv_volts_local<200)
+          {
+            Serial.println("Precharge ON");
+            digitalWrite(PreChg, LOW);  //precharge on
+            Pch_Flag=true;
+          }
+        }
+        if (!HV_Flag && Pch_Flag)  //using inverter measured hv for initial tests. Will use ISA derived voltage in final version.
+        {
       
+          Serial.println("Precharging");
+          if (inv_volts_local>340)
+          {
+            Serial.println("Main1 RELAY ON, Pchg OFF");
+            digitalWrite(SysMain1, LOW);  //main contactor on
+            digitalWrite(PreChg, HIGH);
+            HV_Flag=true;  //hv on flag
+          }
+        }
+      }
     }
     else{
       Serial.println("Global enable on - CHARGE DISABLE");
@@ -236,13 +296,15 @@ void HV_Con()
       digitalWrite(Ign, HIGH);  //ignition relay on
       digitalWrite(Failsafe, HIGH);
       digitalWrite(FailsafeChg, HIGH);
+      Pch_Flag = false;
+      HV_Flag = false;
+      inv_volts_local = 0;
     }
   }
-} 
+}
 
 
-void CheckCAN()
-{
+void CheckCAN(){
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 //read incoming data from can//////////////////
@@ -291,10 +353,7 @@ void CheckCAN()
       
       if((inFrame.data.bytes[7] & 0x0F) == checksumTotal){
         charger_status = inFrame.data.bytes[4];
-        if(timer_temp.hasPassed(1000)){
-          
-        }
-        //if(charger_status == 
+        
       }
       
     }
@@ -304,16 +363,6 @@ void CheckCAN()
         LBC_Charge_Flag = (inFrame.data.bytes[3] & 0b00010000) >> 4;
         timer_temp.restart();
       }
-    }
-
-    if(timer_temp.hasPassed(1000)){
-      Serial.print("OBC status: ");
-      Serial.println(charger_status*2);
-
-      Serial.print("LBC charge flag: ");
-      Serial.println(LBC_Charge_Flag);
-      
-      timer_temp.restart();
     }
 
     if(inFrame.id == 0x380 && inFrame.length == 8){
@@ -354,15 +403,9 @@ void CheckCAN()
       }
       else{
         chargerInPort380 = false;
-        if(charge_enable && (charge_activation || charge_constant)){
-          charge_activation = false;
-          charge_constant = false;
-          charge_deactivation = true;
-          timer_500ms.restart();
-        }
-        
         //Serial.println("Charger not in port");
       }
+      
 
       //Serial.println(inFrame.data.bytes[4]);
       if((inFrame.data.bytes[4] & 0b00010000) >> 4 == 1){
@@ -402,17 +445,28 @@ void CheckCAN()
 
     // Capacity
     if(inFrame.id == 0x5BC && inFrame.length == 8){
-        remain_capacity_gids = (inFrame.data.bytes[0] << 2) | ((inFrame.data.bytes[1] & 0b11000000) >> 6);
-        new_full_capacity_wh = ((((inFrame.data.bytes[0] & 0b00111111) << 4) | ((inFrame.data.bytes[1] & 0b11110000) >> 4))) * 80 + 250;
-        dash_bars_capacity = ((inFrame.data.bytes[4] & 0b00000001) == 1)?(inFrame.data.bytes[2] & 0b00001111):dash_bars_capacity;
-        dash_bars_charge = ((inFrame.data.bytes[4] & 0b00000001) == 1)?dash_bars_charge:(inFrame.data.bytes[2] & 0b00001111);
-
-        //Serial.print(inFrame.data.bytes[4] * 0b00000001);
-        //Serial.print(": ");
-        //Serial.println(inFrame.data.bytes[2] & 0b00001111);
-        //Serial.println(dash_bars_capacity);
+      remain_capacity_gids = (inFrame.data.bytes[0] << 2) | ((inFrame.data.bytes[1] & 0b11000000) >> 6);
+      new_full_capacity_wh = ((((inFrame.data.bytes[0] & 0b00111111) << 4) | ((inFrame.data.bytes[1] & 0b11110000) >> 4))) * 80 + 250;
+      dash_bars_capacity = ((inFrame.data.bytes[4] & 0b00000001) == 1)?(inFrame.data.bytes[2] & 0b00001111):dash_bars_capacity;
+      dash_bars_charge = ((inFrame.data.bytes[4] & 0b00000001) == 1)?dash_bars_charge:(inFrame.data.bytes[2] & 0b00001111);
+      time_remaining_charge = ((inFrame.data.bytes[6] & 00011111) << 8) | inFrame.data.bytes[7];
+      charge_complete_flag = (inFrame.data.bytes[5] & 00000100) >> 2;
+      BatteryTempC = inFrame.data.bytes[3] - 40;
+    
+      //Serial.print(inFrame.data.bytes[4] * 0b00000001);
+      //Serial.print(": ");
+      //Serial.println(inFrame.data.bytes[2] & 0b00001111);
+      //Serial.println(dash_bars_capacity);
         
     }
+
+//    if(inFrame.id == 0x5C0 && inFrame.length == 8){
+//      int mux = (inFrame.data.bytes[0] & 0b11000000) >> 6;
+//      if(mux == 2){
+//        BatteryTempC = ((inFrame.data.bytes[2] & 0b11111110) >> 1) - 40;
+//      }
+//      
+//    }
     
     /*if(inFrame.id == 0x55a && inFrame.length == 8){
      // last_received_from_inverter_timestamp = millis();
@@ -440,6 +494,14 @@ void CheckCAN()
       charge_activation = true;
       timer_chg.restart();
       
+  }
+
+// || charger_status == 64 || !NC_relay_status || BatteryTempC > 60
+  if((!chargerInPort380 || BatteryTempC > 60 || charge_complete_flag) && charge_enable && (charge_activation || charge_constant)){
+    charge_activation = false;
+    charge_constant = false;
+    charge_deactivation = true;
+    timer_500ms.restart();
   }
 
   
@@ -654,13 +716,13 @@ void Msgs10ms()                       //10ms messages here
     print_fancy_inFrame(inFrame);
     Serial.println();*/
 
-    Serial.print(outFrame.id);
-    Serial.print(": ");
-    for(int i=0; i<8; i++){
-      Serial.print(outFrame.data.bytes[i], HEX);
-      Serial.print(" ");
-    }
-    Serial.println();
+//    Serial.print(outFrame.id);
+//    Serial.print(": ");
+//    for(int i=0; i<8; i++){
+//      Serial.print(outFrame.data.bytes[i], HEX);
+//      Serial.print(" ");
+//    }
+//    Serial.println();
     Can0.sendFrame(outFrame);
 
 /*    //We need to send 0x1db here with voltage measured by inverter
@@ -737,13 +799,14 @@ void Msgs100ms(){
 
 void NCRoutine(){
   if(charge_activation){
-    current_charge_power = timer_chg.elapsed()*0.124+100;
-    
     if(current_charge_power >= OBC_Max_Power_380 + 100){
+    //if(current_charge_power >= 0x6B){
       charge_activation = false;
       charge_deactivation = false;
       charge_constant = true;
     }
+
+    current_charge_power = timer_chg.elapsed()*0.124+100;
     
     /*Serial.print(timer_chg.elapsed());
     Serial.print(", ");
@@ -752,9 +815,9 @@ void NCRoutine(){
 
   
   else if(charge_constant){
-    /*current_charge_power = 100+OBC_Max_Power_380;
-    Serial.print(current_charge_power);
-    Serial.println(", CONSTANT");*/
+    current_charge_power = 100+OBC_Max_Power_380;
+    //Serial.print(current_charge_power);
+    //Serial.println(", CONSTANT");
   }
 
   if(charge_deactivation){
@@ -806,8 +869,8 @@ void NCRoutine(){
     outFrame.rtr = 1;
   
     outFrame.data.bytes[0] = 0x30;
-    //outFrame.data.bytes[1] = current_charge_power;
-    outFrame.data.bytes[1] = 0x64;
+    outFrame.data.bytes[1] = current_charge_power;
+    //outFrame.data.bytes[1] = 0x64;
     outFrame.data.bytes[2] = 0x20;
     outFrame.data.bytes[3] = 0x00;
     outFrame.data.bytes[4] = 0x00;
@@ -993,13 +1056,13 @@ void NCRoutine(){
     print_fancy_inFrame(inFrame);
     Serial.println();*/
 
-    Serial.print(outFrame.id, HEX);
-    Serial.print(": ");
-    for(int i=0; i<8; i++){
-      Serial.print(outFrame.data.bytes[i], HEX);
-      Serial.print(" ");
-    }
-    Serial.println();
+//    Serial.print(outFrame.id, HEX);
+//    Serial.print(": ");
+//    for(int i=0; i<8; i++){
+//      Serial.print(outFrame.data.bytes[i], HEX);
+//      Serial.print(" ");
+//    }
+//    Serial.println();
     Can0.sendFrame(outFrame);
   }
 }
