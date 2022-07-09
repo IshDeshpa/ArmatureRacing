@@ -94,13 +94,13 @@ uint16_t charge_complete_flag = 0;
 
 uint16_t MPRUN_380 = -1;
 
+
 void setup() {
-  // put your setup code here, to run once:
   Can0.begin(CAN_BPS_500K);   // Inverter CAN
   Can0.watchFor();
 
-  Can1.begin(CAN_BPS_500K);
-  Can1.watchFor();
+  //Can1.begin(CAN_BPS_500K); // Currently unused bus
+  //Can1.watchFor();
 
   Serial.begin(9600);
   
@@ -127,7 +127,8 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  
+  //------------------------------------------------------------------------------HV CONTROL
   
   if (timer_hv.hasPassed(1000)) {
     timer_hv.restart();
@@ -139,6 +140,8 @@ void loop() {
     Serial.println("AAAAAAAAAAAAAAAAAA");  
   }*/
 
+
+  //------------------------------------------------------------------------------SERIAL TORQUE REQUEST
   
   while (Serial.available()) {
     char c = Serial.read();  //gets one byte from serial buffer
@@ -152,8 +155,10 @@ void loop() {
 
   }
 
-  
   readString=""; //empty for next input
+  
+
+  //------------------------------------------------------------------------------CAN
   
   CheckCAN();
 
@@ -200,6 +205,7 @@ void loop() {
   }
 }
 
+
 void HV_Con()
 {
 //  Serial.print("Inverter Voltage: ");
@@ -211,6 +217,9 @@ void HV_Con()
   inv_speed_local = (inverter_status.speed/ INVERTER_BITS_PER_RPM);
 
   if(!charge_enable){
+
+    //------------------------------------------------------------------------------CAR IGNITION ON
+    
     if (global_enable && !Pch_Flag)  //if terminal 15 is on and precharge not enabled
     {
       Serial.println("MC/IGN/FS/Main2 RELAY ON");
@@ -239,6 +248,8 @@ void HV_Con()
       }
     }
 
+    //------------------------------------------------------------------------------CAR IGNITION OFF
+    
     if (!global_enable){
       //digitalWrite(MC, LOW);
       Serial.println("Disabled");
@@ -254,7 +265,12 @@ void HV_Con()
     }
 
   }
+
+  
   else{
+
+    //------------------------------------------------------------------------------CHARGING
+    
     if(!global_enable){
       digitalWrite(MC, LOW);
       //digitalWrite(Ign, LOW);
