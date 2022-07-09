@@ -16,7 +16,9 @@
 #define DCDCTemp 11
 #define EVSystemActivation 13
 
-int battery_voltage = 0;
+int battery_voltage = 35
+
+0;
 
 struct InverterStatus {
   uint16_t voltage = 0;
@@ -79,9 +81,16 @@ bool chargerInPort380 = false;
 bool chargerCurrent380 = false;
 
 double LBC_Max_Power_1DC = 0;
+int LB_Failsafe_Status = 0;
+int LB_Output_Power_Limit_Reason = 0;
+int charge_power_status_LBC = 0;
+int LB_Battery_Voltage = 0;
+int LB_Current = 0;
 double OBC_Max_Power_380 = 0;
+uint16_t LB_SOC = 0;
 
 uint16_t BatteryTempC = 0;
+int J1772_Current_Limiter = 0;
 
 bool LBC_Charge_Flag = false;
 
@@ -171,14 +180,38 @@ void loop() {
     NCRoutine();
     Msgs100ms();
 
-    if(timer_temp.hasPassed(1000)){
+    if(timer_temp.hasPassed(100)){
       Serial.println("---------------");
+      Serial.print("LB Battery Voltage: ");
+      Serial.println(LB_Battery_Voltage);
+
+      Serial.print("LB_Current: ");
+      Serial.println(LB_Current);
+
+      Serial.print("Full Capacity Wh: ");
+      Serial.println(new_full_capacity_wh);
+
+      Serial.print("LB SOC: ");
+      Serial.println(LB_SOC);
+      
       Serial.print("OBC status: ");
       Serial.println(charger_status);
-
+      
       Serial.print("LBC charge flag: ");
       Serial.println(LBC_Charge_Flag);
 
+      Serial.print("LB Failsafe status: ");
+      Serial.println(LB_Failsafe_Status);
+
+      Serial.print("LBC Charge Power Status: ");
+      Serial.println(charge_power_status_LBC);
+
+      Serial.print("LB_Output_Power_Limit_Reason: ");
+      Serial.println(LB_Output_Power_Limit_Reason);
+
+      Serial.print("J1772_Current_Limiter: ");
+      Serial.println(J1772_Current_Limiter);
+      
       Serial.print("NC Relay: ");
       Serial.println(NC_relay_status);
     
@@ -331,10 +364,15 @@ void CheckCAN(){
     Can0.read(inFrame);
     //Serial.println(inFrame.id, HEX);
 
+    if(inFrame.id == 0x55b && inFrame.length == 8){
+      LB_SOC = (inFrame.data.bytes[0] << 2) | ((inFrame.data.bytes[1] & 0b11000000) >> 6);
+    }
+
     if(inFrame.id == 0x1db && inFrame.length == 8){
-      //Serial.print("Battery Voltage?: ");
-      //Serial.println(inFrame.data.bytes[2], HEX);
-      //Serial.println(inFrame.data.bytes[3], HEX);
+      
+      LB_Failsafe_Status = (inFrame.data.bytes[1] & 0b111);
+      LB_Battery_Voltage = ((inFrame.data.bytes[2] << 2) | ((inFrame.data.bytes[3] & 0b11000000) >> 6))/2;
+      LB_Current = ((inFrame.data.bytes[0] << 3) | ((inFrame.data.bytes[3] & 0b11100000) >> 5))/2;
     }
     
     if(inFrame.id == 0x1da && inFrame.length == 8){
@@ -369,6 +407,7 @@ void CheckCAN(){
       
       if((inFrame.data.bytes[7] & 0x0F) == checksumTotal){
         charger_status = inFrame.data.bytes[4];
+        J1772_Current_Limiter = inFrame.data.bytes[2]/2;
         
       }
       
@@ -446,6 +485,7 @@ void CheckCAN(){
     // Max Power for Charging from LBC
     if(inFrame.id == 0x1DC && inFrame.length == 8){
       LBC_Max_Power_1DC = (((inFrame.data.bytes[2] & 0b00000111) << 6) | ((inFrame.data.bytes[3] & 0b11111100) >> 2));
+      charge_power_status_LBC = (inFrame.data.bytes[3] & 0b11);
       //Serial.print("LBC Power x1DC: ");
       //Serial.println(LBC_Max_Power_1DC);
       //Serial.println(inFrame.data.bytes[2], BIN);
@@ -468,6 +508,7 @@ void CheckCAN(){
       time_remaining_charge = ((inFrame.data.bytes[6] & 00011111) << 8) | inFrame.data.bytes[7];
       charge_complete_flag = (inFrame.data.bytes[5] & 00000100) >> 2;
       BatteryTempC = inFrame.data.bytes[3] - 40;
+      LB_Output_Power_Limit_Reason = (inFrame.data.bytes[5] & 0b11100000);
     
       //Serial.print(inFrame.data.bytes[4] * 0b00000001);
       //Serial.print(": ");
