@@ -3,22 +3,23 @@
 #include <Wire_EEPROM.h> 
 #include <Chrono.h>
 
-#define MC  2      // Motor controller relay
-#define Ign 3      // Ignition relay
-#define Failsafe 4    // Failsafe relay
-#define FailsafeChg 5   // Failsafe Charge Relay
-#define SysMain1  6  // System Main 1 Relay (signals relay inside battery)
-#define SysMain2  7  // System Main 2 Relay (signals relay inside battery)
-#define PreChg  8    // Precharge Relay
+#define Ignition  1
 
-#define TwelveVContDCDC 10
-#define DCDCACT 12
-#define DCDCTemp 11
-#define EVSystemActivation 13
+#define MC  2                 // Motor controller relay
+#define Ign 3                 // Ignition relay
+#define Failsafe 4            // Failsafe relay
+#define FailsafeChg 5         // Failsafe Charge Relay
+#define SysMain1  6           // System Main 1 Relay (signals relay inside battery)
+#define SysMain2  7           // System Main 2 Relay (signals relay inside battery)
+#define PreChg  8             // Precharge Relay
 
-int battery_voltage = 35
+#define EVSystemActivation 10 // The one from the Onboard Charger
+#define DCDCTemp 11           // Temperature reading from DCDC Converter
+#define DCDCAct 12            // Activation signal to DCDC Converter
+#define DCDCTwelveVCont 13    // Voltage selection signal to DCDC Converter
 
-0;
+
+int battery_voltage = 350;
 
 struct InverterStatus {
   uint16_t voltage = 0;
@@ -112,6 +113,8 @@ void setup() {
   //Can1.watchFor();
 
   Serial.begin(9600);
+
+  pinMode(Ignition, INPUT_PULLUP);
   
   pinMode(MC, OUTPUT);
   pinMode(Ign, OUTPUT);
@@ -121,8 +124,12 @@ void setup() {
   pinMode(SysMain2, OUTPUT);
   pinMode(PreChg, OUTPUT);
 
-  pinMode(EVSystemActivation, INPUT);
-
+  pinMode(EVSystemActivation, INPUT_PULLUP);
+  pinMode(DCDCTemp, INPUT_PULLUP);
+  pinMode(DCDCAct, OUTPUT);
+  pinMode(DCDCTwelveVCont, OUTPUT);
+  
+  // Set all relays to the off state
   digitalWrite(MC, HIGH);
   digitalWrite(Ign, HIGH);
   digitalWrite(Failsafe, HIGH);
@@ -135,13 +142,18 @@ void setup() {
   timer_temp.restart();
 }
 
+
 void loop() {
+
+  //------------------------------------------------------------------------------READ INPUTS
+
+  CheckInputs();
   
   //------------------------------------------------------------------------------HV CONTROL
   
   if (timer_hv.hasPassed(1000)) {
     timer_hv.restart();
-    HV_Con();
+    HVControl();
     //digitalWrite(MC, LOW);
   } //control hv system
 
@@ -167,7 +179,7 @@ void loop() {
   readString=""; //empty for next input
   
 
-  //------------------------------------------------------------------------------CAN
+  //------------------------------------------------------------------------------CAN & SERIAL READOUTS
   
   CheckCAN();
 
@@ -239,7 +251,17 @@ void loop() {
 }
 
 
-void HV_Con()
+void CheckInputs()
+{
+  bool prev_ge = global_enable;
+  global_enable = !digitalRead(Ignition); // High and low equal to 1 and 0, or true and false. The Ignition switch is HIGH when open/off/false.
+  if (prev_ge != global_enable) {
+    delay(50); // GASP! A Delay! How horrible!! (For lazy debouncing)
+  }
+}
+
+
+void HVControl()
 {
 //  Serial.print("Inverter Voltage: ");
 //  Serial.println(inv_volts_local);
