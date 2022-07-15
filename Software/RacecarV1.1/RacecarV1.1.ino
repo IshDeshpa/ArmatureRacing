@@ -1,27 +1,64 @@
+// TODO clean up the charge_activate vs charge_deactivate code, deal with analog inputs for accelerator pedal, add ifdefs for serial output, spearation of charge and battery vars
+
 #include <due_can.h>  
 #include <due_wire.h>
 #include <Wire_EEPROM.h> 
 #include <Chrono.h>
 
-#define Ignition  1
+#define Ignition            1   // Global Enable signal
+#define MC                  2   // Motor controller relay
+#define Ign                 3   // Ignition relay
+#define Failsafe            4   // Failsafe relay
+#define FailsafeChg         5   // Failsafe Charge Relay
+#define SysMain1            6   // System Main 1 Relay (signals relay inside battery)
+#define SysMain2            7   // System Main 2 Relay (signals relay inside battery)
+#define PreChg              8   // Precharge Relay (signals relay inside battery)
+#define BatOff              9   // Provides power from small 12V battery until DCDC Converter enables
+#define EVSystemActivation  10  // EVSE plug in signal from the Onboard Charger, active LOW
+#define DCDCTemp            11  // Temperature reading from DCDC Converter, active LOW
+#define DCDCAct             12  // Activation signal to DCDC Converter, active HIGH
+#define DCDCTwelveVCont     13  // Voltage selection signal to DCDC Converter, active HIGH
 
-#define MC  2                 // Motor controller relay
-#define Ign 3                 // Ignition relay
-#define Failsafe 4            // Failsafe relay
-#define FailsafeChg 5         // Failsafe Charge Relay
-#define SysMain1  6           // System Main 1 Relay (signals relay inside battery)
-#define SysMain2  7           // System Main 2 Relay (signals relay inside battery)
-#define PreChg  8             // Precharge Relay
+// Change these depending on which printouts you want
+#define PrintInverter
+#define PrintBattery
+#define PrintConverter
+#define PrintCharger
+#define PrintRelays
+#define PrintPedals
 
-#define EVSystemActivation 10 // The one from the Onboard Charger
-#define DCDCTemp 11           // Temperature reading from DCDC Converter
-#define DCDCAct 12            // Activation signal to DCDC Converter
-#define DCDCTwelveVCont 13    // Voltage selection signal to DCDC Converter
+// Millisecond timers
+Chrono timer_Frames10 = Chrono();   // For CAN
+Chrono timer_Frames100 = Chrono();  // For CAN
+Chrono timer_hv = Chrono();
+Chrono timer_inouts = Chrono();
+Chrono timer_chg = Chrono();
+Chrono timer_serial = Chrono();
+//Chrono timer_3sec = Chrono();
 
+// DB stands for Debounce, or input stabilization
+Chrono timer_ev_sys_act_db = Chrono();
+Chrono timer_ignition_db = Chrono();
+Chrono timer_chg_flag_db = Chrono();
 
-int battery_voltage = 350;
+CAN_FRAME outFrame;   // A structured variable according to due_can library for transmitting CAN data.
+CAN_FRAME inFrame;    // Structure to keep inbound inFrames
 
-struct InverterStatus {
+//Universally important thingies
+bool Pch_Flag = false;
+bool HV_Flag = false;
+bool global_enable = false;
+String readString;
+
+//------------------------------------------------------------------------------DCDC CONVERTER STUFF
+bool dcdc_enable = false;
+bool twelve_v_cont = false;
+volatile int pwm_value = 0;
+volatile int prev_time = 0;
+
+//------------------------------------------------------------------------------INVERTER STUFF
+struct InverterStatus
+{
   uint16_t voltage = 0;
   int16_t speed = 0;
   int8_t inverter_temperature = 0;
@@ -33,35 +70,23 @@ int inv_volts_local;
 int inv_speed_local;
 int16_t final_torque_request = 0;
 
-CAN_FRAME outFrame;  //A structured variable according to due_can library for transmitting CAN data.
-CAN_FRAME inFrame;    //structure to keep inbound inFrames
-
 #define INVERTER_BITS_PER_VOLT 2
 #define INVERTER_BITS_PER_RPM 2
 
-Chrono timer_Frames10 = Chrono();
-Chrono timer_Frames100 = Chrono();
-Chrono timer_500ms = Chrono();
-Chrono timer_hv = Chrono();
-Chrono timer_chg = Chrono();
-Chrono timer_temp = Chrono();
-//Chrono timer_3sec = Chrono();
-
-bool Pch_Flag = false;
-bool HV_Flag = false;
-bool global_enable = false;
-String readString;
-
-/*const int accelPedalPin = A0;
+//------------------------------------------------------------------------------PEDAL STUFF
+const int accelPedalPin = A0;
 const int minValueAccel = 255;
 const int maxValueAccel = 700;
 int accelerator = 0;
 
+/*
 const int brakePedalPin = A1;
 const int minValueBrake = 170;
 const int maxValueBrake = 310;
-int brake = 0;*/
+int brake = 0;
+*/
 
+//------------------------------------------------------------------------------CHARGING STUFF
 bool charge_enable = false;
 
 bool charge_activation = false;
@@ -104,9 +129,9 @@ uint16_t charge_complete_flag = 0;
 
 uint16_t MPRUN_380 = -1;
 
-
+//------------------------------------------------------------------------------------setup------------------------------------------------------------------------------------
 void setup() {
-  Can0.begin(CAN_BPS_500K);   // Inverter CAN
+  Can0.begin(CAN_BPS_500K);   // Inverter/LBattery/OBC CAN
   Can0.watchFor();
 
   //Can1.begin(CAN_BPS_500K); // Currently unused bus
@@ -115,7 +140,6 @@ void setup() {
   Serial.begin(9600);
 
   pinMode(Ignition, INPUT_PULLUP);
-  
   pinMode(MC, OUTPUT);
   pinMode(Ign, OUTPUT);
   pinMode(Failsafe, OUTPUT);
@@ -123,47 +147,57 @@ void setup() {
   pinMode(SysMain1, OUTPUT);
   pinMode(SysMain2, OUTPUT);
   pinMode(PreChg, OUTPUT);
-
+  pinMode(BatOff, OUTPUT);
   pinMode(EVSystemActivation, INPUT_PULLUP);
   pinMode(DCDCTemp, INPUT_PULLUP);
   pinMode(DCDCAct, OUTPUT);
   pinMode(DCDCTwelveVCont, OUTPUT);
   
-  // Set all relays to the off state
+  // Set all relays/mosfets to the off state
   digitalWrite(MC, HIGH);
   digitalWrite(Ign, HIGH);
   digitalWrite(Failsafe, HIGH);
   digitalWrite(FailsafeChg, HIGH);
   digitalWrite(SysMain1, HIGH);
   digitalWrite(SysMain2, HIGH);
-  digitalWrite(PreChg, HIGH);  
+  digitalWrite(PreChg, HIGH);
+  digitalWrite(DCDCAct, LOW);
+  digitalWrite(DCDCTwelveVCont, LOW);
 
-  timer_chg.restart();
-  timer_temp.restart();
+  // Except for the Battery Off relay, which provides Arduino+LBat+OBC startup power
+  digitalWrite(BatOff, LOW);
+
+  // A way to read the PWM signals
+  attachInterrupt(DCDCTemp, falling, FALLING);
+
+  // I don't think this is needed...
+  //timer_chg.restart();
 }
 
-
+//------------------------------------------------------------------------------------loop------------------------------------------------------------------------------------
 void loop() {
 
-  //------------------------------------------------------------------------------READ INPUTS
-
-  CheckInputs();
+  //------------------------------------------------------------------------------READ AND WRITE NON-CAN SIGNALS
+  if (timer_inouts.hasPassed(5))// Includes pwm output stuff
+  {
+    timer_inouts.restart();
+    CheckIO();
+  }
   
   //------------------------------------------------------------------------------HV CONTROL
   
-  if (timer_hv.hasPassed(1000)) {
+  if (timer_hv.hasPassed(500))
+  {
     timer_hv.restart();
     HVControl();
     //digitalWrite(MC, LOW);
-  } //control hv system
+  }
 
   /*if(digitalRead(EVSystemActivation) == HIGH){
     Serial.println("AAAAAAAAAAAAAAAAAA");  
   }*/
-
-
-  //------------------------------------------------------------------------------SERIAL TORQUE REQUEST
   
+  //------------------------------------------------------------------------------SERIAL TORQUE REQUEST
   while (Serial.available()) {
     char c = Serial.read();  //gets one byte from serial buffer
     readString += c; //makes the string readString
@@ -178,103 +212,206 @@ void loop() {
 
   readString=""; //empty for next input
   
-
-  //------------------------------------------------------------------------------CAN & SERIAL READOUTS
-  
+  //------------------------------------------------------------------------------CAN
   CheckCAN();
 
-  if(global_enable && !charge_enable){
+  if (global_enable && !charge_enable)
+  {
     Msgs100ms();  //fire the 100ms can messages
     Msgs10ms();   //fire the 10ms can messages
   }
-  else if(charge_enable && !global_enable){
+  else if (charge_enable && !global_enable)
+  {
     //Serial.println("charge enabled");
     NCRoutine();
     Msgs100ms();
+  }
 
-    if(timer_temp.hasPassed(100)){
-      Serial.println("---------------");
+  //------------------------------------------------------------------------------SERIAL READOUTS
+  if (timer_serial.hasPassed(100))
+  {
+    Serial.println("---------------");
+    
+    if (global_enable) { Serial.println("Enabled"); }
+    else { Serial.println("Disabled"); }
+
+    #ifdef PrintBattery
       Serial.print("LB Battery Voltage: ");
       Serial.println(LB_Battery_Voltage);
-
       Serial.print("LB_Current: ");
       Serial.println(LB_Current);
-
-      Serial.print("Full Capacity Wh: ");
-      Serial.println(new_full_capacity_wh);
-
-      Serial.print("LB SOC: ");
-      Serial.println(LB_SOC);
-      
-      Serial.print("OBC status: ");
-      Serial.println(charger_status);
-      
-      Serial.print("LBC charge flag: ");
-      Serial.println(LBC_Charge_Flag);
-
-      Serial.print("LB Failsafe status: ");
-      Serial.println(LB_Failsafe_Status);
-
-      Serial.print("LBC Charge Power Status: ");
-      Serial.println(charge_power_status_LBC);
-
-      Serial.print("LB_Output_Power_Limit_Reason: ");
-      Serial.println(LB_Output_Power_Limit_Reason);
-
-      Serial.print("J1772_Current_Limiter: ");
-      Serial.println(J1772_Current_Limiter);
-      
-      Serial.print("NC Relay: ");
-      Serial.println(NC_relay_status);
-    
       Serial.print("Battery Temp C: ");
       Serial.println(BatteryTempC);
+    #endif
     
+    #ifdef PrintInverter
+      Serial.print("Inverter Voltage: ");
+      Serial.println(inv_volts_local);
+      Serial.print("Motor Speed: ");
+      Serial.println(inv_speed_local);
+    #endif
+    
+    #ifdef PrintConverter
+      Serial.print("DCDC Converter Enabled: ");
+      Serial.println(dcdc_enable);
+      Serial.print("DCDC Converter Temperature Percentage: ");
+      if (pwm_value <= 4 && pwm_value >= 2.5) { Serial.println(map(pwm_value, 250, 400, 0, 100)); }
+      else { Serial.println("read error :("); }
+    #endif
+    
+    #ifdef PrintCharger
+      Serial.print("Full Capacity Wh: ");
+      Serial.println(new_full_capacity_wh);
+      Serial.print("LB SOC: ");
+      Serial.println(LB_SOC);
+      Serial.print("OBC status: ");
+      Serial.println(charger_status);
+      Serial.print("LBC charge flag: ");
+      Serial.println(LBC_Charge_Flag);
+      Serial.print("LB Failsafe status: ");
+      Serial.println(LB_Failsafe_Status);
+      Serial.print("LBC Charge Power Status: ");
+      Serial.println(charge_power_status_LBC);
+      Serial.print("LB_Output_Power_Limit_Reason: ");
+      Serial.println(LB_Output_Power_Limit_Reason);
+      Serial.print("J1772_Current_Limiter: ");
+      Serial.println(J1772_Current_Limiter);
+      Serial.print("NC Relay: ");
+      Serial.println(NC_relay_status);
       Serial.print("Current gid capacity: ");
       Serial.println(remain_capacity_gids);
-
       Serial.print("Current charge power: ");
       Serial.println(current_charge_power);
-
       Serial.print("Time remaining for charge: ");
       Serial.println(time_remaining_charge);
-
       Serial.print("Charge complete flag: ");
       Serial.println(charge_complete_flag);
-      
-      Serial.println("---------------");
-      
-      timer_temp.restart();
-    }
+    #endif
+    
+    #ifdef PrintRelays
+      Serial.print("MC Relay: ");
+      Serial.println(!digitalRead(MC));
+      Serial.print("Ign Relay: ");
+      Serial.println(!digitalRead(Ign));
+      Serial.print("Failsafe Relay: ");
+      Serial.println(!digitalRead(Failsafe));
+      Serial.print("FailsafeChg Relay: ");
+      Serial.println(!digitalRead(FailsafeChg));
+      Serial.print("SysMain1 Relay: ");
+      Serial.println(!digitalRead(SysMain1));
+      Serial.print("SysMain2 Relay: ");
+      Serial.println(!digitalRead(SysMain2));
+      Serial.print("PreChg Relay: ");
+      Serial.println(!digitalRead(PreChg));
+      Serial.print("BatOff Relay: ");
+      Serial.println(!digitalRead(BatOff));
+    #endif
 
+    #ifdef PrintPedals
+      Serial.print("Accelerator: ");
+      Serial.println(accelerator);
+      //Serial.print("Brake: ");
+      //Serial.println(brake);
+    #endif
+    
+    Serial.println("---------------");
+    timer_serial.restart();
   }
 }
 
-
-void CheckInputs()
+//------------------------------------------------------------------------------------CheckIO------------------------------------------------------------------------------------
+void CheckIO()
 {
+  //------------------------------------------------------------------------------IGNITION SWITCH
   bool prev_ge = global_enable;
-  global_enable = !digitalRead(Ignition); // High and low equal to 1 and 0, or true and false. The Ignition switch is HIGH when open/off/false.
-  if (prev_ge != global_enable) {
-    delay(50); // GASP! A Delay! How horrible!! (For lazy debouncing)
+  global_enable = !digitalRead(Ignition); // High and low equal to 1 and 0, or true and false. The Ignition switch is HIGH when off.
+  if (prev_ge != global_enable)
+  {
+    if (timer_ignition_db.hasPassed(50))
+    {
+      Serial.print("GLOBAL ENABLE ");
+      Serial.println(global_enable);
+      timer_ignition_db.restart();
+    }
+    else
+    {
+      global_enable = prev_ge;
+    }
+  }
+
+  //------------------------------------------------------------------------------PEDALS
+  accelerator = analogRead(accelPedalPin);
+  accelerator = constrain(accelerator, minValueAccel, maxValueAccel);
+  accelerator = map(accelerator, minValueAccel, maxValueAccel, 0, 2047);
+
+  /*
+  brake = analogRead(brakePedalPin);
+  brake = constrain(brake, minValueBrake, maxValueBrake, 0, maxValueBrake - minValueBrake);
+  brake = map(brake, minValueBrake, maxValueBrake, 0, maxValueBrake - minValueBrake);
+  */
+
+  //------------------------------------------------------------------------------EV SYS ACT
+  if (!digitalRead(EVSystemActivation) && timer_ev_sys_act_db.hasPassed(2000) && !chargerInPort380)
+  {
+    Serial.println("EVSE DETECTED, CHARGE ENABLED");
+    charge_enable = true;
+    timer_ev_sys_act_db.restart();
+  }
+
+  //------------------------------------------------------------------------------DCDC CONVERTER
+  if (HV_Flag)// Active tasks
+  {
+    if (!dcdc_enable)
+    {
+      dcdc_enable = true;
+      digitalWrite(DCDCAct, HIGH);
+      Serial.println("DCDC Activate");
+    }
+    
+    // Output the 13V signal to the DCDC Converter, 25-75 ms high for 13-15V
+    if (millis()%125 < 25)
+    {
+      if(!twelve_v_cont) {digitalWrite(DCDCTwelveVCont, HIGH);}
+      twelve_v_cont = true;
+    }
+    else if (twelve_v_cont)
+    {
+      digitalWrite(DCDCTwelveVCont, LOW);
+      twelve_v_cont = false;
+    }
+  }
+  else if (dcdc_enable)// Deactivate
+  {
+    digitalWrite(DCDCAct, LOW);
+    digitalWrite(DCDCTwelveVCont, LOW);
+    twelve_v_cont = false;
+    dcdc_enable = false;
+    Serial.println("DCDC Deactivate");
   }
 }
 
-
-void HVControl()
+//------------------------------------------------------------------------------------DCDCTempPWM------------------------------------------------------------------------------------
+void falling()
 {
-//  Serial.print("Inverter Voltage: ");
-//  Serial.println(inv_volts_local);
-//  Serial.print("Motor Speed: ");
-//  Serial.println(inv_speed_local);
-//  
-  inv_volts_local=(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
+  attachInterrupt(DCDCTemp, rising, RISING);
+  prev_time = micros();
+}
+
+void rising()
+{
+  attachInterrupt(DCDCTemp, falling, FALLING);
+  pwm_value = micros()-prev_time;
+}
+
+//------------------------------------------------------------------------------------HVControl------------------------------------------------------------------------------------
+void HVControl()
+{  
+  inv_volts_local = (inverter_status.voltage / INVERTER_BITS_PER_VOLT);
   inv_speed_local = (inverter_status.speed/ INVERTER_BITS_PER_RPM);
 
-  if(!charge_enable){
-
+  if(!charge_enable)
+  {
     //------------------------------------------------------------------------------CAR IGNITION ON
-    
     if (global_enable && !Pch_Flag)  //if terminal 15 is on and precharge not enabled
     {
       Serial.println("MC/IGN/FS/Main2 RELAY ON");
@@ -283,6 +420,7 @@ void HVControl()
       digitalWrite(Failsafe, LOW);
       digitalWrite(SysMain2, LOW);  //main contactor on (for 1 rail)
       digitalWrite(SysMain1, HIGH);
+      
       if(inv_volts_local<200)
       {
         Serial.println("Precharge ON");
@@ -290,9 +428,9 @@ void HVControl()
         Pch_Flag=true;
       }
     }
+    
     if (global_enable && !HV_Flag && Pch_Flag)  //using inverter measured hv for initial tests. Will use ISA derived voltage in final version.
     {
-  
       Serial.println("Precharging");
       if (inv_volts_local>340)
       {
@@ -302,12 +440,11 @@ void HVControl()
         HV_Flag=true;  //hv on flag
       }
     }
-
-    //------------------------------------------------------------------------------CAR IGNITION OFF
     
-    if (!global_enable){
+    //------------------------------------------------------------------------------CAR IGNITION OFF
+    if (!global_enable)
+    {
       //digitalWrite(MC, LOW);
-      Serial.println("Disabled");
       digitalWrite(PreChg, HIGH);  //precharge off
       digitalWrite(SysMain1, HIGH);  //main contactor off
       digitalWrite(SysMain2, HIGH);  //main contactor off
@@ -318,25 +455,27 @@ void HVControl()
       Pch_Flag = false;
       HV_Flag = false;
     }
-
   }
 
   
-  else{
-
-    //------------------------------------------------------------------------------CHARGING
-    
-    if(!global_enable){
+  else
+  {
+    //------------------------------------------------------------------------------CHARGING ON
+    if(!global_enable)
+    {
       digitalWrite(MC, LOW);
       //digitalWrite(Ign, LOW);
       //Serial.println("charge enabled");
       digitalWrite(Failsafe, LOW);
       digitalWrite(FailsafeChg, LOW);
-      if(charge_activation || charge_constant){
+      
+      if(charge_activation || charge_constant)
+      {
         if (!Pch_Flag)  //if terminal 15 is on and precharge not enabled
         {
           digitalWrite(SysMain2, LOW);  //main contactor on (for 1 rail)
           digitalWrite(SysMain1, HIGH);
+          
           if(inv_volts_local<200)
           {
             Serial.println("Precharge ON");
@@ -358,7 +497,10 @@ void HVControl()
         }
       }
     }
-    else{
+    
+    //------------------------------------------------------------------------------CHARGING END
+    else
+    {
       Serial.println("Global enable on - CHARGE DISABLE");
       digitalWrite(PreChg, HIGH);  //precharge off
       digitalWrite(SysMain1, HIGH);  //main contactor off
@@ -374,12 +516,8 @@ void HVControl()
   }
 }
 
-
+//------------------------------------------------------------------------------------CheckCAN------------------------------------------------------------------------------------
 void CheckCAN(){
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////
-//read incoming data from can//////////////////
-//////////////////////////////////////////////////////
   //Serial.println(inFrame.id, HEX);
   if(Can0.available())
   {
@@ -412,10 +550,12 @@ void CheckCAN(){
 
     uint16_t checksumTotal = 0;
 
-    if(inFrame.id == 0x5BF && inFrame.length == 8){
+    if(inFrame.id == 0x5BF && inFrame.length == 8)
+    {
       //Serial.println(inFrame.data.bytes[2]*.5);
       
-      for(int i=0; i<7; i++){
+      for(int i=0; i<7; i++)
+      {
         checksumTotal += (inFrame.data.bytes[i] & 0xF0) >> 4;
         checksumTotal += inFrame.data.bytes[i] & 0x0F;
       }
@@ -427,18 +567,17 @@ void CheckCAN(){
       //Serial.println(checksumTotal);
       //Serial.println(inFrame.data.bytes[7] & 0x0F);
       
-      if((inFrame.data.bytes[7] & 0x0F) == checksumTotal){
+      if((inFrame.data.bytes[7] & 0x0F) == checksumTotal)
+      {
         charger_status = inFrame.data.bytes[4];
         J1772_Current_Limiter = inFrame.data.bytes[2]/2;
-        
       }
-      
     }
 
     if(inFrame.id == 0x1DB && inFrame.length == 8){
-      if(timer_temp.hasPassed(1000)){
+      if(timer_chg_flag_db.hasPassed(1000)){
         LBC_Charge_Flag = (inFrame.data.bytes[3] & 0b00010000) >> 4;
-        timer_temp.restart();
+        timer_chg_flag_db.restart();
       }
     }
 
@@ -556,36 +695,27 @@ void CheckCAN(){
     }*/
 
   }
-
-  int value = digitalRead(EVSystemActivation);
-  //Serial.println(value);
-  if(digitalRead(EVSystemActivation) == HIGH && charge_enable == false && !chargerInPort380 && !charge_deactivation){
-    if(timer_500ms.hasPassed(2000)){
-      Serial.println("EVSE");
-      charge_enable = true;
-    }
-      
-    //Serial.println("charge enabled");
-  }
-
-  if(charge_enable && chargerInPort380 && charge_activation == false && charge_constant == false && charge_deactivation == false){
-      Serial.println("ACTIVATE");
+  
+  //------------------------------------------------------------------------------CHARGE ACTIVATE
+  if(charge_enable && chargerInPort380 && charge_activation == false && 
+  charge_constant == false && charge_deactivation == false)
+  {
+      Serial.println("CHARGE ACTIVATE");
       charge_activation = true;
-      timer_chg.restart();
-      
+      timer_chg.restart();   
   }
 
-// || charger_status == 64 || !NC_relay_status || BatteryTempC > 60
-  if((!chargerInPort380 || BatteryTempC > 60 || charge_complete_flag) && charge_enable && (charge_activation || charge_constant)){
+  //------------------------------------------------------------------------------CHARGE COMPLETE OR ABORT
+  // || charger_status == 64 || !NC_relay_status || BatteryTempC > 60
+  if((!chargerInPort380 || BatteryTempC > 60 || charge_complete_flag) && charge_enable && (charge_activation || charge_constant))
+  {
     charge_activation = false;
     charge_constant = false;
     charge_deactivation = true;
-    timer_500ms.restart();
   }
-
-  
 }
 
+//------------------------------------------------------------------------------------Msgs10ms------------------------------------------------------------------------------------
 void Msgs10ms()                       //10ms messages here
 {
   if(timer_Frames10.hasPassed(10))
@@ -831,6 +961,7 @@ void Msgs10ms()                       //10ms messages here
   }
 }
 
+//------------------------------------------------------------------------------------Msgs100ms------------------------------------------------------------------------------------
 void Msgs100ms(){
   if(timer_Frames100.hasPassed(100))
   {
@@ -874,8 +1005,9 @@ void Msgs100ms(){
     Can0.sendFrame(outFrame); 
   
   }
-}  
+}
 
+//------------------------------------------------------------------------------------NCRoutine------------------------------------------------------------------------------------
 void NCRoutine(){
   if(charge_activation){
     if(current_charge_power >= OBC_Max_Power_380 + 100){
@@ -899,7 +1031,9 @@ void NCRoutine(){
     //Serial.println(", CONSTANT");
   }
 
-  if(charge_deactivation){
+  //------------------------------------------------------------------------------CHARGE DEACTIVATE
+  if(charge_deactivation)
+  {
     current_charge_power = 0x64;
     outFrame.id = 0x1F2;
     outFrame.length = 8;
@@ -914,12 +1048,14 @@ void NCRoutine(){
     outFrame.data.bytes[5] = 0x82;
     outFrame.data.bytes[6] = counter_1f2;
     counter_1f2++;
-    if(counter_1f2 >= 4){
+    if(counter_1f2 >= 4)
+    {
       counter_1f2 = 0;  
     }
     
     outFrame.data.bytes[7] = 0x02;
-    for(int i=0; i<7; i++){
+    for(int i=0; i<7; i++)
+    {
        outFrame.data.bytes[7] += outFrame.data.bytes[i]&0xF0;
        outFrame.data.bytes[7] += outFrame.data.bytes[i]&0x0F;
     }
@@ -1146,29 +1282,7 @@ void NCRoutine(){
   }
 }
 
-
-
-  
-/*void readPedals(){
-  accelerator = analogRead(accelPedalPin);
-  accelerator = constrain(accelerator, minValueAccel, maxValueAccel);
-  accelerator = map(accelerator, minValueAccel, maxValueAccel, 0, 2047);
-
-  brake = analogRead(brakePedalPin);
-  brake = constrain(brake, minValueBrake, maxValueBrake, 0, maxValueBrake - minValueBrake);
-  brake = map(brake, minValueBrake, maxValueBrake, 0, maxValueBrake - minValueBrake);
-}*/
-
-/*static int8_t fahrenheit_to_celsius(uint16_t fahrenheit)
-{
-  int16_t result = ((int16_t)fahrenheit - 32) * 5 / 9;
-  if(result < -128)
-    return -128;
-  if(result > 127)
-    return 127;
-  return result;
-}*/
-
+//------------------------------------------------------------------------------------nissan_crc------------------------------------------------------------------------------------
 // Cyclic redundancy check, used to ensure that message is transferred without packet loss
 static void nissan_crc(uint8_t *data, uint8_t polynomial){
   // We want to process 8 bytes with the 8th byte being zero
@@ -1187,3 +1301,13 @@ static void nissan_crc(uint8_t *data, uint8_t polynomial){
   }
   data[7] = crc;
 }
+
+/*static int8_t fahrenheit_to_celsius(uint16_t fahrenheit)
+{
+  int16_t result = ((int16_t)fahrenheit - 32) * 5 / 9;
+  if(result < -128)
+    return -128;
+  if(result > 127)
+    return 127;
+  return result;
+}*/
