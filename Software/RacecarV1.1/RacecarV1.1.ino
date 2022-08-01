@@ -1,11 +1,14 @@
-// TODO clean up the charge_activate vs charge_deactivate code, deal with analog inputs for accelerator pedal, add ifdefs for serial output, spearation of charge and battery vars
+// TODO clean up the charge_activate vs charge_deactivate code, deal with analog inputs for accelerator pedal, separation of charge and battery vars, difference between msgs10ms and
+// ncroutine??
+
+HardwareSerial *serial;
 
 #include <due_can.h>  
 #include <due_wire.h>
 #include <Wire_EEPROM.h> 
 #include <Chrono.h>
 
-#define Ignition            1   // Global Enable signal
+#define Ignition            25  // Global Enable signal
 #define MC                  2   // Motor controller relay
 #define Ign                 3   // Ignition relay
 #define Failsafe            4   // Failsafe relay
@@ -75,8 +78,8 @@ int16_t final_torque_request = 0;
 
 //------------------------------------------------------------------------------PEDAL STUFF
 const int accelPedalPin = A0;
-const int minValueAccel = 255;
-const int maxValueAccel = 700;
+const int minValueAccel = 151;
+const int maxValueAccel = 959;
 int accelerator = 0;
 
 /*
@@ -136,9 +139,7 @@ void setup() {
 
   //Can1.begin(CAN_BPS_500K); // Currently unused bus
   //Can1.watchFor();
-
-  Serial.begin(9600);
-
+  
   pinMode(Ignition, INPUT_PULLUP);
   pinMode(MC, OUTPUT);
   pinMode(Ign, OUTPUT);
@@ -168,7 +169,17 @@ void setup() {
   digitalWrite(BatOff, LOW);
 
   // A way to read the PWM signals
-  attachInterrupt(DCDCTemp, falling, FALLING);
+  attachInterrupt(digitalPinToInterrupt(DCDCTemp), fall, FALLING);
+
+  //USB Serial
+  //Serial.begin(115200);
+  //serial = &Serial;
+  
+  //Bluetooth Serial
+  Serial1.begin(38400);
+  serial = &Serial1;
+
+  while(!serial){}
 
   // I don't think this is needed...
   //timer_chg.restart();
@@ -176,7 +187,7 @@ void setup() {
 
 //------------------------------------------------------------------------------------loop------------------------------------------------------------------------------------
 void loop() {
-
+  
   //------------------------------------------------------------------------------READ AND WRITE NON-CAN SIGNALS
   if (timer_inouts.hasPassed(5))// Includes pwm output stuff
   {
@@ -185,27 +196,26 @@ void loop() {
   }
   
   //------------------------------------------------------------------------------HV CONTROL
-  
   if (timer_hv.hasPassed(500))
   {
     timer_hv.restart();
     HVControl();
     //digitalWrite(MC, LOW);
   }
-
+  
   /*if(digitalRead(EVSystemActivation) == HIGH){
-    Serial.println("AAAAAAAAAAAAAAAAAA");  
+    serial->println("AAAAAAAAAAAAAAAAAA");  
   }*/
   
   //------------------------------------------------------------------------------SERIAL TORQUE REQUEST
-  while (Serial.available()) {
-    char c = Serial.read();  //gets one byte from serial buffer
+  while (serial->available()) {
+    char c = serial->read();  //gets one byte from serial buffer
     readString += c; //makes the string readString
     delay(2);  //slow looping to allow buffer to fill with next character
   }
 
   if (readString.length() >0) {
-   // Serial.println(readString);  //so you can see the captured string
+   // serial->println(readString);  //so you can see the captured string
     final_torque_request = readString.toInt();  //convert readString into a number
 
   }
@@ -222,99 +232,98 @@ void loop() {
   }
   else if (charge_enable && !global_enable)
   {
-    //Serial.println("charge enabled");
+    //serial->println("charge enabled");
     NCRoutine();
     Msgs100ms();
   }
-
   //------------------------------------------------------------------------------SERIAL READOUTS
-  if (timer_serial.hasPassed(100))
+  if (timer_serial.hasPassed(5000))
   {
-    Serial.println("---------------");
+    serial->println("---------------");
     
-    if (global_enable) { Serial.println("Enabled"); }
-    else { Serial.println("Disabled"); }
+    if (global_enable) { serial->println("Enabled"); }
+    else { serial->println("Disabled"); }
 
     #ifdef PrintBattery
-      Serial.print("LB Battery Voltage: ");
-      Serial.println(LB_Battery_Voltage);
-      Serial.print("LB_Current: ");
-      Serial.println(LB_Current);
-      Serial.print("Battery Temp C: ");
-      Serial.println(BatteryTempC);
+      serial->print("LB Battery Voltage: ");
+      serial->println(LB_Battery_Voltage);
+      serial->print("LB_Current: ");
+      serial->println(LB_Current);
+      serial->print("Battery Temp C: ");
+      serial->println(BatteryTempC);
     #endif
     
     #ifdef PrintInverter
-      Serial.print("Inverter Voltage: ");
-      Serial.println(inv_volts_local);
-      Serial.print("Motor Speed: ");
-      Serial.println(inv_speed_local);
+      serial->print("Inverter Voltage: ");
+      serial->println(inv_volts_local);
+      serial->print("Motor Speed: ");
+      serial->println(inv_speed_local);
     #endif
     
     #ifdef PrintConverter
-      Serial.print("DCDC Converter Enabled: ");
-      Serial.println(dcdc_enable);
-      Serial.print("DCDC Converter Temperature Percentage: ");
-      if (pwm_value <= 4 && pwm_value >= 2.5) { Serial.println(map(pwm_value, 250, 400, 0, 100)); }
-      else { Serial.println("read error :("); }
+      serial->print("DCDC Converter Enabled: ");
+      serial->println(dcdc_enable);
+      serial->print("DCDC Converter Temperature Percentage: ");
+      if (pwm_value <= 4 && pwm_value >= 2.5) { serial->println(map(pwm_value, 250, 400, 0, 100)); }
+      else { serial->println("read error :("); }
     #endif
     
     #ifdef PrintCharger
-      Serial.print("Full Capacity Wh: ");
-      Serial.println(new_full_capacity_wh);
-      Serial.print("LB SOC: ");
-      Serial.println(LB_SOC);
-      Serial.print("OBC status: ");
-      Serial.println(charger_status);
-      Serial.print("LBC charge flag: ");
-      Serial.println(LBC_Charge_Flag);
-      Serial.print("LB Failsafe status: ");
-      Serial.println(LB_Failsafe_Status);
-      Serial.print("LBC Charge Power Status: ");
-      Serial.println(charge_power_status_LBC);
-      Serial.print("LB_Output_Power_Limit_Reason: ");
-      Serial.println(LB_Output_Power_Limit_Reason);
-      Serial.print("J1772_Current_Limiter: ");
-      Serial.println(J1772_Current_Limiter);
-      Serial.print("NC Relay: ");
-      Serial.println(NC_relay_status);
-      Serial.print("Current gid capacity: ");
-      Serial.println(remain_capacity_gids);
-      Serial.print("Current charge power: ");
-      Serial.println(current_charge_power);
-      Serial.print("Time remaining for charge: ");
-      Serial.println(time_remaining_charge);
-      Serial.print("Charge complete flag: ");
-      Serial.println(charge_complete_flag);
+      serial->print("Full Capacity Wh: ");
+      serial->println(new_full_capacity_wh);
+      serial->print("LB SOC: ");
+      serial->println(LB_SOC);
+      serial->print("OBC status: ");
+      serial->println(charger_status);
+      serial->print("LBC charge flag: ");
+      serial->println(LBC_Charge_Flag);
+      serial->print("LB Failsafe status: ");
+      serial->println(LB_Failsafe_Status);
+      serial->print("LBC Charge Power Status: ");
+      serial->println(charge_power_status_LBC);
+      serial->print("LB_Output_Power_Limit_Reason: ");
+      serial->println(LB_Output_Power_Limit_Reason);
+      serial->print("J1772_Current_Limiter: ");
+      serial->println(J1772_Current_Limiter);
+      serial->print("NC Relay: ");
+      serial->println(NC_relay_status);
+      serial->print("Current gid capacity: ");
+      serial->println(remain_capacity_gids);
+      serial->print("Current charge power: ");
+      serial->println(current_charge_power);
+      serial->print("Time remaining for charge: ");
+      serial->println(time_remaining_charge);
+      serial->print("Charge complete flag: ");
+      serial->println(charge_complete_flag);
     #endif
     
     #ifdef PrintRelays
-      Serial.print("MC Relay: ");
-      Serial.println(!digitalRead(MC));
-      Serial.print("Ign Relay: ");
-      Serial.println(!digitalRead(Ign));
-      Serial.print("Failsafe Relay: ");
-      Serial.println(!digitalRead(Failsafe));
-      Serial.print("FailsafeChg Relay: ");
-      Serial.println(!digitalRead(FailsafeChg));
-      Serial.print("SysMain1 Relay: ");
-      Serial.println(!digitalRead(SysMain1));
-      Serial.print("SysMain2 Relay: ");
-      Serial.println(!digitalRead(SysMain2));
-      Serial.print("PreChg Relay: ");
-      Serial.println(!digitalRead(PreChg));
-      Serial.print("BatOff Relay: ");
-      Serial.println(!digitalRead(BatOff));
+      serial->print("MC Relay: ");
+      serial->println(!digitalRead(MC));
+      serial->print("Ign Relay: ");
+      serial->println(!digitalRead(Ign));
+      serial->print("Failsafe Relay: ");
+      serial->println(!digitalRead(Failsafe));
+      serial->print("FailsafeChg Relay: ");
+      serial->println(!digitalRead(FailsafeChg));
+      serial->print("SysMain1 Relay: ");
+      serial->println(!digitalRead(SysMain1));
+      serial->print("SysMain2 Relay: ");
+      serial->println(!digitalRead(SysMain2));
+      serial->print("PreChg Relay: ");
+      serial->println(!digitalRead(PreChg));
+      serial->print("BatOff Relay: ");
+      serial->println(!digitalRead(BatOff));
     #endif
 
     #ifdef PrintPedals
-      Serial.print("Accelerator: ");
-      Serial.println(accelerator);
-      //Serial.print("Brake: ");
-      //Serial.println(brake);
+      serial->print("Accelerator: ");
+      serial->println(accelerator);
+      //serial->print("Brake: ");
+      //serial->println(brake);
     #endif
     
-    Serial.println("---------------");
+    serial->println("---------------");
     timer_serial.restart();
   }
 }
@@ -329,8 +338,8 @@ void CheckIO()
   {
     if (timer_ignition_db.hasPassed(50))
     {
-      Serial.print("GLOBAL ENABLE ");
-      Serial.println(global_enable);
+      serial->print("GLOBAL ENABLE ");
+      serial->println(global_enable);
       timer_ignition_db.restart();
     }
     else
@@ -342,30 +351,29 @@ void CheckIO()
   //------------------------------------------------------------------------------PEDALS
   accelerator = analogRead(accelPedalPin);
   accelerator = constrain(accelerator, minValueAccel, maxValueAccel);
-  accelerator = map(accelerator, minValueAccel, maxValueAccel, 0, 2047);
-
-  /*
-  brake = analogRead(brakePedalPin);
-  brake = constrain(brake, minValueBrake, maxValueBrake, 0, maxValueBrake - minValueBrake);
-  brake = map(brake, minValueBrake, maxValueBrake, 0, maxValueBrake - minValueBrake);
-  */
+  accelerator = map(accelerator, minValueAccel, maxValueAccel, 0, 1023);
+  
+  //brake = analogRead(brakePedalPin);
+  //brake = constrain(brake, minValueBrake, maxValueBrake, 0, maxValueBrake - minValueBrake);
+  //brake = map(brake, minValueBrake, maxValueBrake, 0, maxValueBrake - minValueBrake);
+  
 
   //------------------------------------------------------------------------------EV SYS ACT
   if (!digitalRead(EVSystemActivation) && timer_ev_sys_act_db.hasPassed(2000) && !chargerInPort380)
   {
-    Serial.println("EVSE DETECTED, CHARGE ENABLED");
+    serial->println("EVSE DETECTED, CHARGE ENABLED");
     charge_enable = true;
     timer_ev_sys_act_db.restart();
   }
 
-  //------------------------------------------------------------------------------DCDC CONVERTER
+  //------------------------------------------------------------------------------ CONVERTER
   if (HV_Flag)// Active tasks
   {
     if (!dcdc_enable)
     {
       dcdc_enable = true;
       digitalWrite(DCDCAct, HIGH);
-      Serial.println("DCDC Activate");
+      serial->println("DCDC Activate");
     }
     
     // Output the 13V signal to the DCDC Converter, 25-75 ms high for 13-15V
@@ -386,21 +394,23 @@ void CheckIO()
     digitalWrite(DCDCTwelveVCont, LOW);
     twelve_v_cont = false;
     dcdc_enable = false;
-    Serial.println("DCDC Deactivate");
+    serial->println("DCDC Deactivate");
   }
 }
 
 //------------------------------------------------------------------------------------DCDCTempPWM------------------------------------------------------------------------------------
-void falling()
+void fall()
 {
-  attachInterrupt(DCDCTemp, rising, RISING);
+  attachInterrupt(digitalPinToInterrupt(DCDCTemp), rise, RISING);
   prev_time = micros();
+  //serial->println("Fall triggered");
 }
 
-void rising()
+void rise()
 {
-  attachInterrupt(DCDCTemp, falling, FALLING);
+  attachInterrupt(digitalPinToInterrupt(DCDCTemp), fall, FALLING);
   pwm_value = micros()-prev_time;
+  //serial->println("Rise triggered");
 }
 
 //------------------------------------------------------------------------------------HVControl------------------------------------------------------------------------------------
@@ -414,7 +424,7 @@ void HVControl()
     //------------------------------------------------------------------------------CAR IGNITION ON
     if (global_enable && !Pch_Flag)  //if terminal 15 is on and precharge not enabled
     {
-      Serial.println("MC/IGN/FS/Main2 RELAY ON");
+      serial->println("MC/IGN/FS/Main2 RELAY ON");
       digitalWrite(MC, LOW);  //inverter power on
       digitalWrite(Ign, LOW);  //ignition relay on
       digitalWrite(Failsafe, LOW);
@@ -423,7 +433,7 @@ void HVControl()
       
       if(inv_volts_local<200)
       {
-        Serial.println("Precharge ON");
+        serial->println("Ignition ON");
         digitalWrite(PreChg, LOW);  //precharge on
         Pch_Flag=true;
       }
@@ -431,10 +441,10 @@ void HVControl()
     
     if (global_enable && !HV_Flag && Pch_Flag)  //using inverter measured hv for initial tests. Will use ISA derived voltage in final version.
     {
-      Serial.println("Precharging");
+      serial->println("Precharging");
       if (inv_volts_local>340)
       {
-        Serial.println("Main1 RELAY ON, Pchg OFF");
+        serial->println("Main1 RELAY ON, Pchg OFF");
         digitalWrite(SysMain1, LOW);  //main contactor on
         digitalWrite(PreChg, HIGH);
         HV_Flag=true;  //hv on flag
@@ -442,14 +452,14 @@ void HVControl()
     }
     
     //------------------------------------------------------------------------------CAR IGNITION OFF
-    if (!global_enable)
+    if (!global_enable && Pch_Flag)
     {
-      //digitalWrite(MC, LOW);
+      serial->println("Ignition OFF");
       digitalWrite(PreChg, HIGH);  //precharge off
       digitalWrite(SysMain1, HIGH);  //main contactor off
       digitalWrite(SysMain2, HIGH);  //main contactor off
       digitalWrite(MC, HIGH);  //inverter power off
-      digitalWrite(Ign, HIGH);  //ignition relay on
+      digitalWrite(Ign, HIGH);  //ignition relay off
       digitalWrite(Failsafe, HIGH);
       digitalWrite(FailsafeChg, HIGH);
       Pch_Flag = false;
@@ -465,32 +475,31 @@ void HVControl()
     {
       digitalWrite(MC, LOW);
       //digitalWrite(Ign, LOW);
-      //Serial.println("charge enabled");
+      //serial->println("charge enabled");
       digitalWrite(Failsafe, LOW);
       digitalWrite(FailsafeChg, LOW);
       
       if(charge_activation || charge_constant)
       {
-        if (!Pch_Flag)  //if terminal 15 is on and precharge not enabled
+        if (!Pch_Flag)  // if terminal 15 is on and precharge not enabled
         {
-          digitalWrite(SysMain2, LOW);  //main contactor on (for 1 rail)
+          digitalWrite(SysMain2, LOW);  // main contactor on (for 1 rail)
           digitalWrite(SysMain1, HIGH);
           
           if(inv_volts_local<200)
           {
-            Serial.println("Precharge ON");
-            digitalWrite(PreChg, LOW);  //precharge on
+            serial->println("Precharge ON");
+            digitalWrite(PreChg, LOW);  // precharge on
             Pch_Flag=true;
           }
         }
-        if (!HV_Flag && Pch_Flag)  //using inverter measured hv for initial tests. Will use ISA derived voltage in final version.
+        if (!HV_Flag && Pch_Flag)  // using inverter measured hv for initial tests. Will use ISA derived voltage in final version.
         {
-      
-          Serial.println("Precharging");
+          serial->println("Precharging");
           if (inv_volts_local>340)
           {
-            Serial.println("Main1 RELAY ON, Pchg OFF");
-            digitalWrite(SysMain1, LOW);  //main contactor on
+            serial->println("Main1 RELAY ON, Pchg OFF");
+            digitalWrite(SysMain1, LOW);  // main contactor on
             digitalWrite(PreChg, HIGH);
             HV_Flag=true;  //hv on flag
           }
@@ -501,7 +510,7 @@ void HVControl()
     //------------------------------------------------------------------------------CHARGING END
     else
     {
-      Serial.println("Global enable on - CHARGE DISABLE");
+      serial->println("Global enable on - CHARGE DISABLE");
       digitalWrite(PreChg, HIGH);  //precharge off
       digitalWrite(SysMain1, HIGH);  //main contactor off
       digitalWrite(SysMain2, HIGH);  //main contactor off
@@ -518,11 +527,11 @@ void HVControl()
 
 //------------------------------------------------------------------------------------CheckCAN------------------------------------------------------------------------------------
 void CheckCAN(){
-  //Serial.println(inFrame.id, HEX);
+  //serial->println(inFrame.id, HEX);
   if(Can0.available())
   {
     Can0.read(inFrame);
-    //Serial.println(inFrame.id, HEX);
+    //serial->println(inFrame.id, HEX);
 
     if(inFrame.id == 0x55b && inFrame.length == 8){
       LB_SOC = (inFrame.data.bytes[0] << 2) | ((inFrame.data.bytes[1] & 0b11000000) >> 6);
@@ -552,7 +561,7 @@ void CheckCAN(){
 
     if(inFrame.id == 0x5BF && inFrame.length == 8)
     {
-      //Serial.println(inFrame.data.bytes[2]*.5);
+      //serial->println(inFrame.data.bytes[2]*.5);
       
       for(int i=0; i<7; i++)
       {
@@ -564,8 +573,8 @@ void CheckCAN(){
       checksumTotal -= 0x01;
       checksumTotal = checksumTotal & 0x0F;
 
-      //Serial.println(checksumTotal);
-      //Serial.println(inFrame.data.bytes[7] & 0x0F);
+      //serial->println(checksumTotal);
+      //serial->println(inFrame.data.bytes[7] & 0x0F);
       
       if((inFrame.data.bytes[7] & 0x0F) == checksumTotal)
       {
@@ -582,83 +591,71 @@ void CheckCAN(){
     }
 
     if(inFrame.id == 0x380 && inFrame.length == 8){
-      //Serial.print("NC Relay Status:");
+      //serial->print("NC Relay Status:");
       if((inFrame.data.bytes[4] & 0b01000000)>>6 == 1){
         NC_relay_status = true;
       }
       else{
         NC_relay_status = false;
       }
-      //Serial.println(NC_relay_status);
-      //Serial.print("QC Relay Status:");
+      //serial->println(NC_relay_status);
+      //serial->print("QC Relay Status:");
       if((inFrame.data.bytes[4] & 0b00100000)>>5 == 1){
         QC_relay_status = true;
       }
       else{
         QC_relay_status = false;
       }
-      //Serial.println(QC_relay_status);
+      //serial->println(QC_relay_status);
 
       if(MPRUN_380 == -1){
         MPRUN_380 = (inFrame.data.bytes[7] & 0b11110000) >> 4;
       }
       else{
         if(MPRUN_380 == (inFrame.data.bytes[7] & 0b11110000) >> 4){
-          Serial.println("FROZEN DATA ERROR");
+          serial->println("FROZEN DATA ERROR");
           //TODO: Something to handle error here
         }
         else{
           MPRUN_380 = (inFrame.data.bytes[7] & 0b11110000) >> 4;
-          //Serial.println((inFrame.data.bytes[7] & 11110000) >> 4, HEX);
+          //serial->println((inFrame.data.bytes[7] & 11110000) >> 4, HEX);
         }
       }
 
-      if((inFrame.data.bytes[2] & 0b00001000)>>3 == 1){
-        chargerInPort380 = true;
-        //Serial.println("Charger in port");
-      }
-      else{
-        chargerInPort380 = false;
-        //Serial.println("Charger not in port");
-      }
-      
+      // Charger in port
+      if((inFrame.data.bytes[2] & 0b00001000)>>3 == 1){ chargerInPort380 = true; }
+      else{ chargerInPort380 = false; }
 
-      //Serial.println(inFrame.data.bytes[4]);
-      if((inFrame.data.bytes[4] & 0b00010000) >> 4 == 1){
-        chargerCurrent380 = true;
-        //Serial.println("Charger current");
-      }
-      else{
-        chargerCurrent380 = false;
-        //Serial.println("Charger no current");
-      }
+      // Charger current
+      //serial->println(inFrame.data.bytes[4]);
+      if((inFrame.data.bytes[4] & 0b00010000) >> 4 == 1){ chargerCurrent380 = true; }// Current detected
+      else{ chargerCurrent380 = false; }// No current
 
+      // Idk
       OBC_Max_Power_380 = ((inFrame.data.bytes[2] & 0b00000001) << 8 | (inFrame.data.bytes[3]));
 
-      //Serial.print("OBC Power x380:");
-      //Serial.println(OBC_Max_Power_380);
-
+      // Wall voltage from EVSE
       AC_voltage_charger = ((inFrame.data.bytes[5] & 0b00000111) << 6) | ((inFrame.data.bytes[6] & 0b11111100) >> 2);
-      //Serial.print("AC Voltage Into Charger: ");
-      //Serial.println(AC_voltage_charger);
+      //serial->print("AC Voltage Into Charger: ");
+      //serial->println(AC_voltage_charger);
     }
 
     // Max Power for Charging from LBC
-    if(inFrame.id == 0x1DC && inFrame.length == 8){
+    if(inFrame.id == 0x1DC && inFrame.length == 8)
+    {
       LBC_Max_Power_1DC = (((inFrame.data.bytes[2] & 0b00000111) << 6) | ((inFrame.data.bytes[3] & 0b11111100) >> 2));
       charge_power_status_LBC = (inFrame.data.bytes[3] & 0b11);
-      //Serial.print("LBC Power x1DC: ");
-      //Serial.println(LBC_Max_Power_1DC);
-      //Serial.println(inFrame.data.bytes[2], BIN);
+      //serial->print("LBC Power x1DC: ");
+      //serial->println(LBC_Max_Power_1DC);
+      //serial->println(inFrame.data.bytes[2], BIN);
 
-      /*Serial.print("Byte 2: ");
-      Serial.println(inFrame.data.bytes[2] & 00001111, BIN);
-      Serial.print("Byte 3: ");
-      Serial.println(inFrame.data.bytes[3] & 11111100, BIN);
-      Serial.print("Concatenated: ");
-      Serial.println(((inFrame.data.bytes[2] & 00001111) << 6) | ((inFrame.data.bytes[3] & 11111100) >> 2), BIN);*/
+      /*serial->print("Byte 2: ");
+      serial->println(inFrame.data.bytes[2] & 00001111, BIN);
+      serial->print("Byte 3: ");
+      serial->println(inFrame.data.bytes[3] & 11111100, BIN);
+      serial->print("Concatenated: ");
+      serial->println(((inFrame.data.bytes[2] & 00001111) << 6) | ((inFrame.data.bytes[3] & 11111100) >> 2), BIN);*/
     }
-
 
     // Capacity
     if(inFrame.id == 0x5BC && inFrame.length == 8){
@@ -671,10 +668,10 @@ void CheckCAN(){
       BatteryTempC = inFrame.data.bytes[3] - 40;
       LB_Output_Power_Limit_Reason = (inFrame.data.bytes[5] & 0b11100000);
     
-      //Serial.print(inFrame.data.bytes[4] * 0b00000001);
-      //Serial.print(": ");
-      //Serial.println(inFrame.data.bytes[2] & 0b00001111);
-      //Serial.println(dash_bars_capacity);
+      //serial->print(inFrame.data.bytes[4] * 0b00000001);
+      //serial->print(": ");
+      //serial->println(inFrame.data.bytes[2] & 0b00001111);
+      //serial->println(dash_bars_capacity);
         
     }
 
@@ -691,7 +688,7 @@ void CheckCAN(){
   
       inverter_status.inverter_temperature = fahrenheit_to_celsius(inFrame.data.bytes[2]);
       inverter_status.motor_temperature = fahrenheit_to_celsius(inFrame.data.bytes[1]);
-      //Serial.println(inverter_status.inverter_temperature);
+      //serial->println(inverter_status.inverter_temperature);
     }*/
 
   }
@@ -700,9 +697,9 @@ void CheckCAN(){
   if(charge_enable && chargerInPort380 && charge_activation == false && 
   charge_constant == false && charge_deactivation == false)
   {
-      Serial.println("CHARGE ACTIVATE");
+      serial->println("CHARGE ACTIVATE");
       charge_activation = true;
-      timer_chg.restart();   
+      timer_chg.restart();
   }
 
   //------------------------------------------------------------------------------CHARGE COMPLETE OR ABORT
@@ -720,7 +717,7 @@ void Msgs10ms()                       //10ms messages here
 {
   if(timer_Frames10.hasPassed(10))
   {
-    //Serial.println("Sending msgs");
+    //serial->println("Sending msgs");
     timer_Frames10.restart();
     static uint8_t counter_11a_d6 = 0;
     static uint8_t counter_1d4 = 0;
@@ -729,7 +726,7 @@ void Msgs10ms()                       //10ms messages here
     outFrame.id = 0x11a;            // Set our transmission address ID
     outFrame.length = 8;            // Data payload 3 bytes
     outFrame.extended = 0;          // Extended addresses - 0=11-bit 1=29bit
-    outFrame.rtr=1;                 //No request
+    outFrame.rtr=1;                 // No request
   
     outFrame.data.bytes[0] = 0x4E;
     //outFrame.data.bytes[0] = 0x01;
@@ -764,9 +761,9 @@ void Msgs10ms()                       //10ms messages here
     // Extra CRC
     nissan_crc(outFrame.data.bytes, 0x85);
   
-    /*Serial.print(F("Sending "));
+    /*serial->print(F("Sending "));
     print_fancy_inFrame(inFrame);
-    Serial.println();*/
+    serial->println();*/
   
     Can0.sendFrame(outFrame);
 
@@ -774,7 +771,7 @@ void Msgs10ms()                       //10ms messages here
     outFrame.id = 0x1d4;            // Set our transmission address ID
     outFrame.length = 8;            // Data payload 3 bytes
     outFrame.extended = 0;          // Extended addresses - 0=11-bit 1=29bit
-    outFrame.rtr=1;                 //No request
+    outFrame.rtr=1;                 // No request
 
     // Data taken from a gen1 inFrame where the car is starting to
     // move at about 10% throttle: F70700E0C74430D4
@@ -794,14 +791,14 @@ void Msgs10ms()                       //10ms messages here
     if(final_torque_request != last_logged_final_torque_request){
       last_logged_final_torque_request = final_torque_request;
       //log_print_timestamp();
-      Serial.print(F("Sending torque request "));
-      Serial.print(final_torque_request);
-      Serial.print(F(" (speed: "));
-      Serial.print(inverter_status.speed / INVERTER_BITS_PER_RPM);
-      Serial.print(F(" rpm)"));
-      Serial.print(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
-      Serial.print(F(" Volts)"));
-      Serial.println();
+      serial->print(F("Sending torque request "));
+      serial->print(final_torque_request);
+      serial->print(F(" (speed: "));
+      serial->print(inverter_status.speed / INVERTER_BITS_PER_RPM);
+      serial->print(F(" rpm)"));
+      serial->print(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
+      serial->print(F(" Volts)"));
+      serial->println();
     }
 
     //Check if within bounds of 12 bit number   
@@ -921,17 +918,17 @@ void Msgs10ms()                       //10ms messages here
     // Extra CRC
     nissan_crc(outFrame.data.bytes, 0x85);
 
-    /*Serial.print(F("Sending "));
+    /*serial->print(F("Sending "));
     print_fancy_inFrame(inFrame);
-    Serial.println();*/
+    serial->println();*/
 
-//    Serial.print(outFrame.id);
-//    Serial.print(": ");
+//    serial->print(outFrame.id);
+//    serial->print(": ");
 //    for(int i=0; i<8; i++){
-//      Serial.print(outFrame.data.bytes[i], HEX);
-//      Serial.print(" ");
+//      serial->print(outFrame.data.bytes[i], HEX);
+//      serial->print(" ");
 //    }
-//    Serial.println();
+//    serial->println();
     Can0.sendFrame(outFrame);
 
 /*    //We need to send 0x1db here with voltage measured by inverter
@@ -995,13 +992,13 @@ void Msgs100ms(){
     /*CONSOLE.print(F("Sending "));
     print_fancy_inFrame(inFrame);
     CONSOLE.println();*/
-//    Serial.print(outFrame.id, HEX);
-//    Serial.print(": ");
+//    serial->print(outFrame.id, HEX);
+//    serial->print(": ");
 //    for(int i=0; i<8; i++){
-//      Serial.print(outFrame.data.bytes[i], HEX);
-//      Serial.print(" ");
+//      serial->print(outFrame.data.bytes[i], HEX);
+//      serial->print(" ");
 //    }
-//    Serial.println();
+//    serial->println();
     Can0.sendFrame(outFrame); 
   
   }
@@ -1019,16 +1016,16 @@ void NCRoutine(){
 
     current_charge_power = timer_chg.elapsed()*0.124+100;
     
-    /*Serial.print(timer_chg.elapsed());
-    Serial.print(", ");
-    Serial.println(current_charge_power, HEX);*/
+    /*serial->print(timer_chg.elapsed());
+    serial->print(", ");
+    serial->println(current_charge_power, HEX);*/
   }
 
   
   else if(charge_constant){
     current_charge_power = 100+OBC_Max_Power_380;
-    //Serial.print(current_charge_power);
-    //Serial.println(", CONSTANT");
+    //serial->print(current_charge_power);
+    //serial->println(", CONSTANT");
   }
 
   //------------------------------------------------------------------------------CHARGE DEACTIVATE
@@ -1064,7 +1061,7 @@ void NCRoutine(){
 
     Can0.sendFrame(outFrame);
 
-    Serial.println("DEACTIVATE");
+    serial->println("DEACTIVATE");
 
     charge_constant = false;
     charge_activation = false;  
@@ -1105,13 +1102,13 @@ void NCRoutine(){
     outFrame.data.bytes[7] = outFrame.data.bytes[7] & 0x0F;*/
     outFrame.data.bytes[7] = counter_1f2 + 0x0A;
 
-//    Serial.print(outFrame.id, HEX);
-//    Serial.print(": ");
+//    serial->print(outFrame.id, HEX);
+//    serial->print(": ");
 //    for(int i=0; i<8; i++){
-//      Serial.print(outFrame.data.bytes[i], HEX);
-//      Serial.print(" ");
+//      serial->print(outFrame.data.bytes[i], HEX);
+//      serial->print(" ");
 //    }
-//    Serial.println();
+//    serial->println();
     Can0.sendFrame(outFrame);
 
     // Send target motor torque signal
@@ -1138,14 +1135,14 @@ void NCRoutine(){
     if(final_torque_request != last_logged_final_torque_request){
       last_logged_final_torque_request = final_torque_request;
       //log_print_timestamp();
-      Serial.print(F("Sending torque request "));
-      Serial.print(final_torque_request);
-      Serial.print(F(" (speed: "));
-      Serial.print(inverter_status.speed / INVERTER_BITS_PER_RPM);
-      Serial.print(F(" rpm)"));
-      Serial.print(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
-      Serial.print(F(" Volts)"));
-      Serial.println();
+      serial->print(F("Sending torque request "));
+      serial->print(final_torque_request);
+      serial->print(F(" (speed: "));
+      serial->print(inverter_status.speed / INVERTER_BITS_PER_RPM);
+      serial->print(F(" rpm)"));
+      serial->print(inverter_status.voltage / INVERTER_BITS_PER_VOLT);
+      serial->print(F(" Volts)"));
+      serial->println();
     }*/
 
     //Check if within bounds of 12 bit number   
@@ -1267,17 +1264,17 @@ void NCRoutine(){
     // Extra CRC
     nissan_crc(outFrame.data.bytes, 0x85);
 
-    /*Serial.print(F("Sending "));
+    /*serial->print(F("Sending "));
     print_fancy_inFrame(inFrame);
-    Serial.println();*/
+    serial->println();*/
 
-//    Serial.print(outFrame.id, HEX);
-//    Serial.print(": ");
+//    serial->print(outFrame.id, HEX);
+//    serial->print(": ");
 //    for(int i=0; i<8; i++){
-//      Serial.print(outFrame.data.bytes[i], HEX);
-//      Serial.print(" ");
+//      serial->print(outFrame.data.bytes[i], HEX);
+//      serial->print(" ");
 //    }
-//    Serial.println();
+//    serial->println();
     Can0.sendFrame(outFrame);
   }
 }
