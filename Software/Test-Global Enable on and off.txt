@@ -1,0 +1,409 @@
+---------------
+Disabled
+LB Battery Voltage: 0
+LB_Current: 0
+Battery Temp C: 0
+Inverter Voltage: 0
+Motor Speed: 0
+DCDC Converter Enabled: 0
+DCDC Converter Temperature Percentage: read error :(
+Full Capacity Wh: 0
+LB SOC: 0
+OBC status: 0
+LBC charge flag: 0
+LB Failsafe status: 0
+LBC Charge Power Status: 0
+LB_Output_Power_Limit_Reason: 0
+J1772_Current_Limiter: 0
+NC Relay: 0
+Current gid capacity: 0
+Current charge power: 100
+Time remaining for charge: 0
+Charge complete flag: 0
+MC Relay: 0
+Ign Relay: 0
+Failsafe Relay: 0
+FailsafeChg Relay: 0
+SysMain1 Relay: 0
+SysMain2 Relay: 0
+PreChg Relay: 0
+BatOff Relay: 1
+Accelerator: 0
+---------------
+---------------
+Disabled
+LB Battery Voltage: 0
+LB_Current: 0
+Battery Temp C: 0
+Inverter Voltage: 0
+Motor Speed: 0
+DCDC Converter Enabled: 0
+DCDC Converter Temperature Percentage: read error :(
+Full Capacity Wh: 0
+LB SOC: 0
+OBC status: 0
+LBC charge flag: 0
+LB Failsafe status: 0
+LBC Charge Power Status: 0
+LB_Output_Power_Limit_Reason: 0
+J1772_Current_Limiter: 0
+NC Relay: 0
+Current gid capacity: 0
+Current charge power: 100
+Time remaining for charge: 0
+Charge complete flag: 0
+MC Relay: 0
+Ign Relay: 0
+Failsafe Relay: 0
+FailsafeChg Relay: 0
+SysMain1 Relay: 0
+SysMain2 Relay: 0
+PreChg Relay: 0
+BatOff Relay: 1
+Accelerator: 0
+---------------
+---------------
+Disabled
+LB Battery Voltage: 0
+LB_Current: 0
+Battery Temp C: 0
+Inverter Voltage: 0
+Motor Speed: 0
+DCDC Converter Enabled: 0
+DCDC Converter Temperature Percentage: read error :(
+Full Capacity Wh: 0
+LB SOC: 0
+OBC status: 0
+LBC charge flag: 0
+LB Failsafe status: 0
+LBC Charge Power Status: 0
+LB_Output_Power_Limit_Reason: 0
+J1772_Current_Limiter: 0
+NC Relay: 0
+Current gid capacity: 0
+Current charge power: 100
+Time remaining for charge: 0
+Charge complete flag: 0
+MC Relay: 0
+Ign Relay: 0
+Failsafe Relay: 0
+FailsafeChg Relay: 0
+SysMain1 Relay: 0
+SysMain2 Relay: 0
+PreChg Relay: 0
+BatOff Relay: 1
+Accelerator: 0
+---------------
+---------------
+Disabled
+LB Battery Voltage: 0
+LB_Current: 0
+Battery Temp C: 0
+Inverter Voltage: 0
+Motor Speed: 0
+DCDC Converter Enabled: 0
+DCDC Converter Temperature Percentage: read error :(
+Full Capacity Wh: 0
+LB SOC: 0
+OBC status: 0
+LBC charge flag: 0
+LB Failsafe status: 0
+LBC Charge Power Status: 0
+LB_Output_Power_Limit_Reason: 0
+J1772_Current_Limiter: 0
+NC Relay: 0
+Current gid capacity: 0
+Current charge power: 100
+Time remaining for charge: 0
+Charge complete flag: 0
+MC Relay: 0
+Ign Relay: 0
+Failsafe Relay: 0
+FailsafeChg Relay: 0
+SysMain1 Relay: 0
+SysMain2 Relay: 0
+PreChg Relay: 0
+BatOff Relay: 1
+Accelerator: 0
+---------------
+---------------
+Disabled
+LB Battery Voltage: 0
+LB_Current: 0
+Battery Temp C: 0
+Inverter Voltage: 0
+Motor Speed: 0
+DCDC Converter Enabled: 0
+DCDC Converter Temperature Percentage: read error :(
+Full Capacity Wh: 0
+LB SOC: 0
+OBC status: 0
+LBC charge flag: 0
+LB Failsafe status: 0
+LBC Charge Power Status: 0
+LB_Output_Power_Limit_Reason: 0
+J1772_Current_Limiter: 0
+NC Relay: 0
+Current gid capacity: 0
+Current charge power: 100
+Time remaining for charge: 0
+Charge complete flag: 0
+MC Relay: 0
+Ign Relay: 0
+Failsafe Relay: 0
+FailsafeChg Relay: 0
+SysMain1 Relay: 0
+SysMain2 Relay: 0
+PreChg Relay: 0
+BatOff Relay: 1
+Accelerator: 0
+---------------
+---------------
+Disabled
+LB Battery Voltage: 0
+LB_Current: 0
+Battery Temp C: 0
+Inverter Voltage: 0
+Motor Speed: 0
+DCDC Converter Enabled: 0
+DCDC Converter Temperature Percentage: read error :(
+Full Capacity Wh: 0
+LB SOC: 0
+OBC status: 0
+LBC charge flag: 0
+LB Failsafe status: 0
+LBC Charge Power Status: 0
+LB_Output_Power_Limit_Reason: 0
+J1772_Current_Limiter: 0
+NC Relay: 0
+Current gid capacity: 0
+Current charge power: 100
+Time remaining for charge: 0
+Charge complete flag: 0
+MC Relay: 0
+Ign Relay: 0
+Failsafe Relay: 0
+FailsafeChg Relay: 0
+SysMain1 Relay: 0
+SysMain2 Relay: 0
+PreChg Relay: 0
+BatOff Relay: 1
+Accelerator: 0
+---------------
+GLOBAL ENABLE 1
+MC/IGN/FS/Main2 RELAY ON
+Ignition ON
+Precharging
+Precharging
+Precharging
+Precharging
+Precharging
+Precharging
+Precharging
+Precharging
+---------------
+Enabled
+LB Battery Voltage: 0
+LB_Current: 0
+Battery Temp C: 0
+Inverter Voltage: 2
+Motor Speed: 0
+DCDC Converter Enabled: 0
+DCDC Converter Temperature Percentage: read error :(
+Full Capacity Wh: 0
+LB SOC: 0
+OBC status: 48
+LBC charge flag: 0
+LB Failsafe status: 0
+LBC Charge Power Status: 0
+LB_Output_Power_Limit_Reason: 0
+J1772_Current_Limiter: 0
+NC Relay: 0
+Current gid capacity: 0
+Current charge power: 100
+Time remaining for charge: 0
+Charge complete flag: 0
+MC Relay: 1
+Ign Relay: 1
+Failsafe Relay: 1
+FailsafeChg Relay: 0
+SysMain1 Relay: 0
+SysMain2 Relay: 1
+PreChg Relay: 1
+BatOff Relay: 1
+Accelerator: 0
+---------------
+Precharging
+Precharging
+Precharging
+Precharging
+Precharging
+Precharging
+Precharging
+Precharging
+Precharging
+Precharging
+---------------
+Enabled
+LB Battery Voltage: 0
+LB_Current: 0
+Battery Temp C: 0
+Inverter Voltage: 2
+Motor Speed: 0
+DCDC Converter Enabled: 0
+DCDC Converter Temperature Percentage: read error :(
+Full Capacity Wh: 0
+LB SOC: 0
+OBC status: 48
+LBC charge flag: 0
+LB Failsafe status: 0
+LBC Charge Power Status: 0
+LB_Output_Power_Limit_Reason: 0
+J1772_Current_Limiter: 0
+NC Relay: 0
+Current gid capacity: 0
+Current charge power: 100
+Time remaining for charge: 0
+Charge complete flag: 0
+MC Relay: 1
+Ign Relay: 1
+Failsafe Relay: 1
+FailsafeChg Relay: 0
+SysMain1 Relay: 0
+SysMain2 Relay: 1
+PreChg Relay: 1
+BatOff Relay: 1
+Accelerator: 0
+---------------
+Precharging
+Precharging
+GLOBAL ENABLE 0
+---------------
+Disabled
+LB Battery Voltage: 0
+LB_Current: 0
+Battery Temp C: 0
+Inverter Voltage: 2
+Motor Speed: 0
+DCDC Converter Enabled: 0
+DCDC Converter Temperature Percentage: read error :(
+Full Capacity Wh: 0
+LB SOC: 0
+OBC status: 24
+LBC charge flag: 0
+LB Failsafe status: 0
+LBC Charge Power Status: 0
+LB_Output_Power_Limit_Reason: 0
+J1772_Current_Limiter: 0
+NC Relay: 0
+Current gid capacity: 0
+Current charge power: 100
+Time remaining for charge: 0
+Charge complete flag: 0
+MC Relay: 1
+Ign Relay: 1
+Failsafe Relay: 1
+FailsafeChg Relay: 0
+SysMain1 Relay: 0
+SysMain2 Relay: 1
+PreChg Relay: 1
+BatOff Relay: 1
+Accelerator: 0
+---------------
+---------------
+Disabled
+LB Battery Voltage: 0
+LB_Current: 0
+Battery Temp C: 0
+Inverter Voltage: 2
+Motor Speed: 0
+DCDC Converter Enabled: 0
+DCDC Converter Temperature Percentage: read error :(
+Full Capacity Wh: 0
+LB SOC: 0
+OBC status: 16
+LBC charge flag: 0
+LB Failsafe status: 0
+LBC Charge Power Status: 0
+LB_Output_Power_Limit_Reason: 0
+J1772_Current_Limiter: 0
+NC Relay: 0
+Current gid capacity: 0
+Current charge power: 100
+Time remaining for charge: 0
+Charge complete flag: 0
+MC Relay: 1
+Ign Relay: 1
+Failsafe Relay: 1
+FailsafeChg Relay: 0
+SysMain1 Relay: 0
+SysMain2 Relay: 1
+PreChg Relay: 1
+BatOff Relay: 1
+Accelerator: 0
+---------------
+---------------
+Disabled
+LB Battery Voltage: 0
+LB_Current: 0
+Battery Temp C: 0
+Inverter Voltage: 2
+Motor Speed: 0
+DCDC Converter Enabled: 0
+DCDC Converter Temperature Percentage: read error :(
+Full Capacity Wh: 0
+LB SOC: 0
+OBC status: 24
+LBC charge flag: 0
+LB Failsafe status: 0
+LBC Charge Power Status: 0
+LB_Output_Power_Limit_Reason: 0
+J1772_Current_Limiter: 0
+NC Relay: 0
+Current gid capacity: 0
+Current charge power: 100
+Time remaining for charge: 0
+Charge complete flag: 0
+MC Relay: 1
+Ign Relay: 1
+Failsafe Relay: 1
+FailsafeChg Relay: 0
+SysMain1 Relay: 0
+SysMain2 Relay: 1
+PreChg Relay: 1
+BatOff Relay: 1
+Accelerator: 0
+---------------
+---------------
+Disabled
+LB Battery Voltage: 0
+LB_Current: 0
+Battery Temp C: 0
+Inverter Voltage: 2
+Motor Speed: 0
+DCDC Converter Enabled: 0
+DCDC Converter Temperature Percentage: read error :(
+Full Capacity Wh: 0
+LB SOC: 0
+OBC status: 24
+LBC charge flag: 0
+LB Failsafe status: 0
+LBC Charge Power Status: 0
+LB_Output_Power_Limit_Reason: 0
+J1772_Current_Limiter: 0
+NC Relay: 0
+Current gid capacity: 0
+Current charge power: 100
+Time remaining for charge: 0
+Charge complete flag: 0
+MC Relay: 1
+Ign Relay: 1
+Failsafe Relay: 1
+FailsafeChg Relay: 0
+SysMain1 Relay: 0
+SysMain2 Relay: 1
+PreChg Relay: 1
+BatOff Relay: 1
+Accelerator: 0
+---------------
+
